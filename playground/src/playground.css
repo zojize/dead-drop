@@ -1,0 +1,188 @@
+@import url('https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;1,6..72,300&family=Fira+Code:wght@300;400&display=swap');
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body, #root { height: 100%; }
+
+/* ─── Layout ─────────────────────────────────────────────── */
+
+.sp {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  height: 100%;
+  position: relative;
+}
+
+.sp-left {
+  background: #faf6f0;
+  color: #3a2e22;
+  font-family: 'Newsreader', Georgia, serif;
+  padding: 2rem 2rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sp-right {
+  background: #0e1117;
+  color: #7ee787;
+  font-family: 'Fira Code', monospace;
+  padding: 2rem 2rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sp-seam {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 3px;
+  z-index: 5;
+  background: linear-gradient(180deg, #d4a04400, #d4a044, #7ee787, #7ee78700);
+}
+
+/* ─── Header ─────────────────────────────────────────────── */
+
+.sp-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 0.3rem;
+}
+
+.sp-tag {
+  font-size: 0.55rem;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  opacity: 0.45;
+}
+
+.sp-h {
+  font-size: 1.4rem;
+  font-weight: 300;
+  margin-bottom: 0.8rem;
+  letter-spacing: 0.02em;
+}
+
+.sp-left .sp-h { font-style: italic; color: #6b5744; }
+.sp-right .sp-h { color: #3d6; font-weight: 400; font-size: 1rem; }
+
+/* ─── Textarea ───────────────────────────────────────────── */
+
+.sp-area {
+  flex: 1;
+  width: 100%;
+  border: none;
+  resize: none;
+  outline: none;
+  font-size: 15px;
+  line-height: 1.7;
+  padding: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.sp-left .sp-area {
+  background: transparent;
+  color: #3a2e22;
+  font-family: 'Newsreader', Georgia, serif;
+  font-size: 17px;
+}
+
+.sp-right .sp-area {
+  background: transparent;
+  color: #7ee787;
+  font-family: 'Fira Code', monospace;
+  font-size: 12px;
+}
+
+.sp-left .sp-area::placeholder { color: #c4b49c; }
+.sp-right .sp-area::placeholder { color: #2a3a2a; }
+
+/* ─── Footer ─────────────────────────────────────────────── */
+
+.sp-footer {
+  margin-top: auto;
+  padding-top: 0.6rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.65rem;
+  gap: 0.6rem;
+  flex-shrink: 0;
+}
+
+.sp-left .sp-footer { color: #b09070; border-top: 1px solid #e8e0d4; }
+.sp-right .sp-footer { color: #2d4a2d; border-top: 1px solid #1a2a1a; }
+
+.sp-share {
+  background: none;
+  border: 1px solid currentColor;
+  color: inherit;
+  font-family: inherit;
+  font-size: 0.6rem;
+  padding: 0.25rem 0.6rem;
+  cursor: pointer;
+  letter-spacing: 0.08em;
+  border-radius: 2px;
+  transition: all 0.15s;
+}
+
+.sp-left .sp-share:hover { background: #3a2e22; color: #faf6f0; }
+
+/* ─── Seed input ─────────────────────────────────────────── */
+
+.sp-seed { display: flex; align-items: center; gap: 0.3rem; }
+.sp-seed label { font-size: 0.55rem; letter-spacing: 0.1em; opacity: 0.6; }
+
+.sp-seed input {
+  width: 5rem;
+  background: transparent;
+  border: 1px solid #d4c4a8;
+  color: #3a2e22;
+  font-family: inherit;
+  font-size: 0.6rem;
+  padding: 0.2rem 0.4rem;
+  border-radius: 2px;
+  outline: none;
+  text-align: center;
+}
+
+.sp-seed input:focus { border-color: #6b5744; }
+.sp-seed input::placeholder { color: #c4b49c; }
+
+/* ─── Decoded preview ────────────────────────────────────── */
+
+.sp-decoded {
+  padding-top: 0.5rem;
+  border-top: 1px solid #1a2a1a;
+  font-size: 0.7rem;
+  color: #3d6a3d;
+  margin-top: 0.5rem;
+  white-space: pre-wrap;
+  max-height: 20lh;
+  overflow: auto;
+}
+
+.sp-decoded span { color: #7ee787; }
+
+.sp-err { color: #f85; font-size: 0.65rem; margin-top: 0.3rem; }
+
+/* ─── Mobile ─────────────────────────────────────────────── */
+
+@media (max-width: 700px) {
+  .sp { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+
+  .sp-seam {
+    left: 0;
+    right: 0;
+    top: 50%;
+    bottom: auto;
+    width: 100%;
+    height: 3px;
+    background: linear-gradient(90deg, #d4a04400, #d4a044, #7ee787, #7ee78700);
+  }
+}

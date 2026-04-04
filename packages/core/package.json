@@ -1,0 +1,46 @@
+{
+  "name": "@zojize/dead-drop",
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Steganographic message encoding via JavaScript ASTs",
+  "license": "MIT",
+  "author": "Jeff Zou",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zojize/dead-drop",
+    "directory": "packages/core"
+  },
+  "exports": {
+    ".": {
+      "development": "./src/lib.ts",
+      "import": "./dist/lib.mjs",
+      "types": "./dist/lib.d.mts"
+    }
+  },
+  "main": "./dist/lib.mjs",
+  "types": "./dist/lib.d.mts",
+  "bin": {
+    "@zojize/dead-drop": "./src/index.ts"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsdown src/lib.ts --format esm --dts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "bun run build && bun run test"
+  },
+  "dependencies": {
+    "@babel/parser": "^7.29.2",
+    "@babel/types": "^7.29.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "tsdown": "^0.21.7",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2"
+  }
+}

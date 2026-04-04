@@ -1,0 +1,12 @@
+{
+  "private": true,
+  "workspaces": ["packages/*", "playground"],
+  "scripts": {
+    "test": "bun run --filter '@zojize/dead-drop' test",
+    "typecheck": "bun run --filter '*' typecheck",
+    "knip": "knip"
+  },
+  "devDependencies": {
+    "knip": "^5.61.0"
+  }
+}

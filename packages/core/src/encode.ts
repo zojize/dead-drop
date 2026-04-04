@@ -1,0 +1,332 @@
+import * as t from '@babel/types'
+import { generateCompact } from './codegen'
+import {
+  EXPR_TABLE,
+  STMT_TABLE,
+  NUMERIC_POOL,
+  IDENT_POOL,
+  STRING_POOL,
+  BINARY_OP_POOL,
+  UNARY_OP_POOL,
+  ASSIGN_OP_POOL,
+  VAR_KIND_POOL,
+  VAR_DECL_NAME_POOL,
+  CATCH_PARAM_POOL,
+  LABEL_POOL,
+  MEMBER_PROP_POOL,
+  ASSIGN_LHS_NAME,
+} from './tables'
+
+// Leaf expression byte values (no children, guaranteed termination)
+const LEAF_EXPR_BYTES = [
+  ...Array.from({ length: 76 }, (_, i) => i),          // NumericLiteral
+  ...Array.from({ length: 64 }, (_, i) => 0x4C + i),   // Identifier
+  ...Array.from({ length: 32 }, (_, i) => 0xBD + i),   // StringLiteral
+  0xFD, 0xFE, 0xFF,                                     // Boolean, Null
+]
+
+/** Seeded PRNG (mulberry32) for deterministic varied padding. */
+function createPadRng(seed: number) {
+  let s = seed | 0
+  return () => {
+    s = s + 0x6D2B79F5 | 0
+    let z = Math.imul(s ^ s >>> 15, 1 | s)
+    z = z + Math.imul(z ^ z >>> 7, 61 | z) ^ z
+    return ((z ^ z >>> 14) >>> 0)
+  }
+}
+
+// ─── Iterative AST builder ──────────────────────────────────────────────────
+// Instead of recursive buildExpression/buildStatement, we use an explicit
+// work stack. Each item is either:
+//   { kind: 'expr', slot }   — build an expression and store in slot
+//   { kind: 'stmt', slot }   — build a statement and store in slot
+//   { kind: 'block', slot }  — build a block (count + stmts) and store in slot
+//   { kind: 'assemble', fn } — call fn() to assemble parent from children
+
+type Slot<T> = { value: T }
+type WorkItem =
+  | { kind: 'expr'; slot: Slot<t.Expression> }
+  | { kind: 'stmt'; slot: Slot<t.Statement> }
+  | { kind: 'block'; slot: Slot<t.Statement[]> }
+  | { kind: 'assemble'; fn: () => void }
+
+/**
+ * Encode a byte array into syntactically valid JavaScript source code.
+ */
+export function encode(message: Uint8Array, seed?: number): string {
+  const length = message.length
+  const prefixed = new Uint8Array(4 + length)
+  prefixed[0] = (length >>> 24) & 0xFF
+  prefixed[1] = (length >>> 16) & 0xFF
+  prefixed[2] = (length >>> 8) & 0xFF
+  prefixed[3] = length & 0xFF
+  prefixed.set(message, 4)
+
+  let cursor = 0
+  const rng = createPadRng(seed ?? length)
+  const isPad = () => cursor >= prefixed.length
+
+  function readByte(): number {
+    return prefixed[cursor++]
+  }
+
+  function padLeafExpr(): t.Expression {
+    const byte = LEAF_EXPR_BYTES[rng() % LEAF_EXPR_BYTES.length]
+    const config = EXPR_TABLE[byte]
+    switch (config.nodeType) {
+      case 'NumericLiteral': return t.numericLiteral(NUMERIC_POOL[config.variant])
+      case 'Identifier': return t.identifier(IDENT_POOL[config.variant])
+      case 'StringLiteral': return t.stringLiteral(STRING_POOL[config.variant])
+      case 'BooleanLiteral': return t.booleanLiteral(config.variant === 1)
+      case 'NullLiteral': return t.nullLiteral()
+      default: return t.numericLiteral(0)
+    }
+  }
+
+  /** Make a leaf expression from a byte without recursion. */
+  function makeLeafExpr(byte: number): t.Expression | null {
+    const config = EXPR_TABLE[byte]
+    switch (config.nodeType) {
+      case 'NumericLiteral': return t.numericLiteral(NUMERIC_POOL[config.variant])
+      case 'Identifier': return t.identifier(IDENT_POOL[config.variant])
+      case 'StringLiteral': return t.stringLiteral(STRING_POOL[config.variant])
+      case 'BooleanLiteral': return t.booleanLiteral(config.variant === 1)
+      case 'NullLiteral': return t.nullLiteral()
+      default: return null // not a leaf
+    }
+  }
+
+  // The work stack drives the iterative build. Items are processed LIFO.
+  // Push children in REVERSE order so they're processed left-to-right.
+  const work: WorkItem[] = []
+
+  function slot<T>(initial?: T): Slot<T> {
+    return { value: initial! }
+  }
+
+  function pushExpr(s: Slot<t.Expression>) { work.push({ kind: 'expr', slot: s }) }
+  function pushStmt(s: Slot<t.Statement>) { work.push({ kind: 'stmt', slot: s }) }
+  function pushBlock(s: Slot<t.Statement[]>) { work.push({ kind: 'block', slot: s }) }
+  function pushAssemble(fn: () => void) { work.push({ kind: 'assemble', fn }) }
+
+  function scheduleExpr(s: Slot<t.Expression>): void {
+    if (isPad()) { s.value = padLeafExpr(); return }
+    const byte = readByte()
+    const leaf = makeLeafExpr(byte)
+    if (leaf) { s.value = leaf; return }
+
+    const config = EXPR_TABLE[byte]
+    switch (config.nodeType) {
+      case 'BinaryExpression': {
+        const l = slot<t.Expression>(), r = slot<t.Expression>()
+        pushAssemble(() => { s.value = t.binaryExpression(BINARY_OP_POOL[config.variant] as any, l.value, r.value) })
+        pushExpr(r); pushExpr(l)
+        break
+      }
+      case 'UnaryExpression': {
+        const arg = slot<t.Expression>()
+        pushAssemble(() => { s.value = t.unaryExpression(UNARY_OP_POOL[config.variant] as any, arg.value, true) })
+        pushExpr(arg)
+        break
+      }
+      case 'ConditionalExpression': {
+        const test = slot<t.Expression>(), cons = slot<t.Expression>(), alt = slot<t.Expression>()
+        pushAssemble(() => { s.value = t.conditionalExpression(test.value, cons.value, alt.value) })
+        pushExpr(alt); pushExpr(cons); pushExpr(test)
+        break
+      }
+      case 'CallExpression': {
+        const callee = slot<t.Expression>()
+        const argSlots = Array.from({ length: config.variant }, () => slot<t.Expression>())
+        pushAssemble(() => { s.value = t.callExpression(callee.value, argSlots.map(a => a.value)) })
+        for (let i = argSlots.length - 1; i >= 0; i--) pushExpr(argSlots[i])
+        pushExpr(callee)
+        break
+      }
+      case 'MemberExpression': {
+        if (config.variant === 8) {
+          const obj = slot<t.Expression>(), prop = slot<t.Expression>()
+          pushAssemble(() => { s.value = t.memberExpression(obj.value, prop.value, true) })
+          pushExpr(prop); pushExpr(obj)
+        } else {
+          const obj = slot<t.Expression>()
+          pushAssemble(() => { s.value = t.memberExpression(obj.value, t.identifier(MEMBER_PROP_POOL[config.variant]), false) })
+          pushExpr(obj)
+        }
+        break
+      }
+      case 'AssignmentExpression': {
+        const rhs = slot<t.Expression>()
+        pushAssemble(() => { s.value = t.assignmentExpression(ASSIGN_OP_POOL[config.variant] as any, t.identifier(ASSIGN_LHS_NAME), rhs.value) })
+        pushExpr(rhs)
+        break
+      }
+      case 'ArrayExpression': {
+        const els = Array.from({ length: config.variant }, () => slot<t.Expression>())
+        pushAssemble(() => { s.value = t.arrayExpression(els.map(e => e.value)) })
+        for (let i = els.length - 1; i >= 0; i--) pushExpr(els[i])
+        break
+      }
+      case 'ObjectExpression': {
+        const pairs = Array.from({ length: config.variant }, () => ({ k: slot<t.Expression>(), v: slot<t.Expression>() }))
+        pushAssemble(() => {
+          s.value = t.objectExpression(pairs.map(p => {
+            const isComputed = !t.isIdentifier(p.k.value) && !t.isStringLiteral(p.k.value) && !t.isNumericLiteral(p.k.value)
+            return t.objectProperty(p.k.value, p.v.value, isComputed)
+          }))
+        })
+        for (let i = pairs.length - 1; i >= 0; i--) { pushExpr(pairs[i].v); pushExpr(pairs[i].k) }
+        break
+      }
+      default:
+        throw new Error(`Unknown expression type: ${config.nodeType}`)
+    }
+  }
+
+  function scheduleStmt(s: Slot<t.Statement>): void {
+    if (isPad()) { s.value = t.expressionStatement(padLeafExpr()); return }
+
+    const config = STMT_TABLE[readByte()]
+    switch (config.nodeType) {
+      case 'ExpressionStatement': {
+        const expr = slot<t.Expression>()
+        pushAssemble(() => { s.value = t.expressionStatement(expr.value) })
+        pushExpr(expr)
+        break
+      }
+      case 'IfStatement': {
+        const test = slot<t.Expression>(), cons = slot<t.Statement[]>()
+        if (config.variant === 0) {
+          const alt = slot<t.Statement[]>()
+          pushAssemble(() => { s.value = t.ifStatement(test.value, t.blockStatement(cons.value), t.blockStatement(alt.value)) })
+          pushBlock(alt); pushBlock(cons); pushExpr(test)
+        } else {
+          pushAssemble(() => { s.value = t.ifStatement(test.value, t.blockStatement(cons.value)) })
+          pushBlock(cons); pushExpr(test)
+        }
+        break
+      }
+      case 'WhileStatement': {
+        const test = slot<t.Expression>(), body = slot<t.Statement>()
+        pushAssemble(() => { s.value = t.whileStatement(test.value, body.value) })
+        pushStmt(body); pushExpr(test)
+        break
+      }
+      case 'ForStatement': {
+        const hasInit = (config.variant & 1) !== 0, hasTest = (config.variant & 2) !== 0, hasUpdate = (config.variant & 4) !== 0
+        const init = hasInit ? slot<t.Expression>() : null
+        const test = hasTest ? slot<t.Expression>() : null
+        const update = hasUpdate ? slot<t.Expression>() : null
+        const body = slot<t.Statement>()
+        pushAssemble(() => { s.value = t.forStatement(init?.value ?? null, test?.value ?? null, update?.value ?? null, body.value) })
+        pushStmt(body)
+        if (update) pushExpr(update)
+        if (test) pushExpr(test)
+        if (init) pushExpr(init)
+        break
+      }
+      case 'DoWhileStatement': {
+        const test = slot<t.Expression>(), body = slot<t.Statement>()
+        pushAssemble(() => { s.value = t.doWhileStatement(test.value, body.value) })
+        pushStmt(body); pushExpr(test)
+        break
+      }
+      case 'ReturnStatement': {
+        const arg = slot<t.Expression>()
+        pushAssemble(() => { s.value = t.returnStatement(arg.value) })
+        pushExpr(arg)
+        break
+      }
+      case 'ThrowStatement': {
+        const arg = slot<t.Expression>()
+        pushAssemble(() => { s.value = t.throwStatement(arg.value) })
+        pushExpr(arg)
+        break
+      }
+      case 'BlockStatement': {
+        const blk = slot<t.Statement[]>()
+        pushAssemble(() => { s.value = t.blockStatement(blk.value) })
+        pushBlock(blk)
+        break
+      }
+      case 'EmptyStatement':
+        s.value = t.emptyStatement()
+        break
+      case 'DebuggerStatement':
+        s.value = t.debuggerStatement()
+        break
+      case 'TryStatement': {
+        const tryBlk = slot<t.Statement[]>(), catchBlk = slot<t.Statement[]>()
+        pushAssemble(() => {
+          s.value = t.tryStatement(
+            t.blockStatement(tryBlk.value),
+            t.catchClause(t.identifier(CATCH_PARAM_POOL[config.variant]), t.blockStatement(catchBlk.value)),
+          )
+        })
+        pushBlock(catchBlk); pushBlock(tryBlk)
+        break
+      }
+      case 'SwitchStatement': {
+        const disc = slot<t.Expression>()
+        const cases = Array.from({ length: config.variant }, () => ({ test: slot<t.Expression>(), body: slot<t.Statement[]>() }))
+        pushAssemble(() => {
+          s.value = t.switchStatement(disc.value, cases.map(c => t.switchCase(c.test.value, c.body.value)))
+        })
+        for (let i = cases.length - 1; i >= 0; i--) { pushBlock(cases[i].body); pushExpr(cases[i].test) }
+        pushExpr(disc)
+        break
+      }
+      case 'LabeledStatement': {
+        const body = slot<t.Statement>()
+        pushAssemble(() => { s.value = t.labeledStatement(t.identifier(LABEL_POOL[config.variant]), body.value) })
+        pushStmt(body)
+        break
+      }
+      case 'VariableDeclaration': {
+        const kindIndex = config.variant % 3, nameIndex = Math.floor(config.variant / 3)
+        const init = slot<t.Expression>()
+        pushAssemble(() => {
+          s.value = t.variableDeclaration(VAR_KIND_POOL[kindIndex] as 'var' | 'let' | 'const', [
+            t.variableDeclarator(t.identifier(VAR_DECL_NAME_POOL[nameIndex]), init.value),
+          ])
+        })
+        pushExpr(init)
+        break
+      }
+      default:
+        throw new Error(`Unknown statement type: ${config.nodeType}`)
+    }
+  }
+
+  function scheduleBlock(s: Slot<t.Statement[]>): void {
+    if (isPad()) { s.value = []; return }
+    const count = readByte()
+    const stmtSlots = Array.from({ length: count }, () => slot<t.Statement>())
+    pushAssemble(() => { s.value = stmtSlots.map(ss => ss.value) })
+    for (let i = stmtSlots.length - 1; i >= 0; i--) pushStmt(stmtSlots[i])
+  }
+
+  function drain(): void {
+    while (work.length > 0) {
+      const item = work.pop()!
+      switch (item.kind) {
+        case 'expr': scheduleExpr(item.slot); break
+        case 'stmt': scheduleStmt(item.slot); break
+        case 'block': scheduleBlock(item.slot); break
+        case 'assemble': item.fn(); break
+      }
+    }
+  }
+
+  // Build top-level statements iteratively
+  const body: t.Statement[] = []
+  while (cursor < prefixed.length) {
+    const s = slot<t.Statement>()
+    scheduleStmt(s)
+    drain()
+    body.push(s.value)
+  }
+
+  return generateCompact(t.program(body))
+}
