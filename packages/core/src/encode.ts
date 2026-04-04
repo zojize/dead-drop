@@ -4,21 +4,16 @@ import {
   EXPR_TABLE,
   STMT_TABLE,
   BINARY_OP_POOL,
+  LOGICAL_OP_POOL,
   UNARY_OP_POOL,
+  UPDATE_OP_POOL,
   ASSIGN_OP_POOL,
   VAR_KIND_POOL,
+  REGEXP_FLAGS,
   ASSIGN_LHS_NAME,
-  DEFAULT_POOLS,
+  DEFAULT_STMT_POOLS,
 } from './tables'
-import { type Pools, SCOPE_SUFFIX_SEP } from './pools'
-
-// Leaf expression byte values (no children, guaranteed termination)
-const LEAF_EXPR_BYTES = [
-  ...Array.from({ length: 76 }, (_, i) => i),          // NumericLiteral
-  ...Array.from({ length: 64 }, (_, i) => 0x4C + i),   // Identifier
-  ...Array.from({ length: 32 }, (_, i) => 0xBD + i),   // StringLiteral
-  0xFD, 0xFE, 0xFF,                                     // Boolean, Null
-]
+import { type StatementPools, SCOPE_SUFFIX_SEP } from './pools'
 
 function createPadRng(seed: number) {
   let s = seed | 0
@@ -32,27 +27,14 @@ function createPadRng(seed: number) {
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-type PoolOrFactory<T> = T[] | ((rand: number) => T)
-
 export interface EncodeOptions {
   /** Seed for the PRNG that generates padding expressions. Defaults to message length. */
   seed?: number
-  /** Custom pools matching the Pools interface. Both encode and decode must use the same pools. */
-  pools?: Partial<Pools>
-  /** Custom identifier names for padding. Array or factory. Merged with pool. */
-  identifiers?: PoolOrFactory<string>
-  /** Custom string literals for padding. Array or factory. Merged with pool. */
-  strings?: PoolOrFactory<string>
-  /** Custom numeric literals for padding. Array or factory. Merged with pool. */
-  numbers?: PoolOrFactory<number>
 }
 
 // ─── Scope tracking ─────────────────────────────────────────────────────────
 
 class ScopeStack {
-  // All var/let/const declarations tracked globally (our code is always
-  // top-level — no functions — so var hoisting means block scoping alone
-  // is insufficient). A flat set avoids var-after-let conflicts.
   private allDecls = new Set<string>()
   private labelScopes: Set<string>[] = [new Set()]
 
@@ -63,7 +45,6 @@ class ScopeStack {
     return this.allDecls.has(name)
   }
 
-  /** List of all declared names (for use as identifier candidates in padding). */
   private declList: string[] = []
 
   declare(name: string) {
@@ -71,7 +52,6 @@ class ScopeStack {
     this.declList.push(name)
   }
 
-  /** Pick a random previously-declared name, or null if none. */
   pickDeclared(rand: number): string | null {
     return this.declList.length > 0 ? this.declList[rand % this.declList.length] : null
   }
@@ -88,6 +68,14 @@ class ScopeStack {
   }
 }
 
+// ─── Cosmetic value generators ──────────────────────────────────────────────
+
+/** Names used for cosmetic identifier/variable references in expressions */
+const COSMETIC_IDENTS = [
+  'x', 'y', 'z', 'w', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h',
+  'i', 'j', 'k', 'n', 'm', 'o', 'val', 'tmp', 'res', 'idx', 'len', 'sum',
+]
+
 // ─── Iterative AST builder ──────────────────────────────────────────────────
 
 type Slot<T> = { value: T }
@@ -101,7 +89,7 @@ type WorkItem =
 
 export function encode(message: Uint8Array, options?: EncodeOptions): string {
   const opts = options ?? {}
-  const pools: Pools = { ...DEFAULT_POOLS, ...opts.pools }
+  const pools: StatementPools = DEFAULT_STMT_POOLS
 
   const length = message.length
   const prefixed = new Uint8Array(4 + length)
@@ -116,29 +104,43 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
   const isPad = () => cursor >= prefixed.length
   const scope = new ScopeStack()
 
-  function pickFrom<T>(builtIn: readonly T[], custom: PoolOrFactory<T> | undefined): (rand: number) => T {
-    if (!custom) return (rand) => builtIn[rand % builtIn.length]
-    if (typeof custom === 'function') {
-      const factory = custom as (rand: number) => T
-      return (rand) => rand % 3 === 0 ? factory(rand) : builtIn[rand % builtIn.length]
-    }
-    const merged = [...builtIn, ...custom]
-    return (rand) => merged[rand % merged.length]
-  }
-
-  const pickIdent = pickFrom(pools.identifiers, opts.identifiers)
-  const pickString = pickFrom(pools.strings, opts.strings)
-  const pickNumber = pickFrom(pools.numbers, opts.numbers)
-
-
   function readByte(): number { return prefixed[cursor++] }
 
+  /** Generate a cosmetic random identifier name */
+  function cosmeticIdent(): string {
+    return COSMETIC_IDENTS[rng() % COSMETIC_IDENTS.length]
+  }
+
+  /** Generate a cosmetic random number */
+  function cosmeticNumber(): number {
+    return rng() % 1000
+  }
+
+  /** Generate a cosmetic random string */
+  function cosmeticString(): string {
+    const chars = 'abcdefghijklmnopqrstuvwxyz'
+    const len = 1 + (rng() % 4)
+    let s = ''
+    for (let i = 0; i < len; i++) s += chars[rng() % chars.length]
+    return s
+  }
+
   /**
-   * Generate a unique var name. For let/const, appends $N suffix on conflict.
-   * Decoder strips suffixes to recover the base name → same variant → same byte.
+   * Convert a 6-bit flags bitmask to a RegExp flags string.
+   * Bit 0 = 'd', 1 = 'g', 2 = 'i', 3 = 'm', 4 = 's', 5 = 'u'
+   */
+  function flagsFromBitmask(bitmask: number): string {
+    let flags = ''
+    for (let i = 0; i < REGEXP_FLAGS.length; i++) {
+      if (bitmask & (1 << i)) flags += REGEXP_FLAGS[i]
+    }
+    return flags
+  }
+
+  /**
+   * Generate a unique var name. Appends $N suffix on conflict.
    */
   function uniqueVarName(baseName: string, _kind: string): string {
-    // All declaration kinds tracked — `var x` after `let x` is also a redecl error
     if (!scope.hasDeclInScope(baseName)) {
       scope.declare(baseName)
       return baseName
@@ -171,28 +173,37 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
 
   function padLeafExpr(): t.Expression {
     const r = rng()
-    // 1-in-3 chance to reference a previously-declared variable (looks realistic)
     if (r % 3 === 0) {
       const decl = scope.pickDeclared(rng())
       if (decl) return t.identifier(decl)
     }
     switch (r % 5) {
-      case 0: return t.numericLiteral(pickNumber(rng()))
-      case 1: return t.identifier(pickIdent(rng()))
-      case 2: return t.stringLiteral(pickString(rng()))
+      case 0: return t.numericLiteral(cosmeticNumber())
+      case 1: return t.identifier(cosmeticIdent())
+      case 2: return t.stringLiteral(cosmeticString())
       case 3: return t.booleanLiteral(rng() % 2 === 0)
       default: return t.nullLiteral()
     }
   }
 
+  /** Try to make a leaf expression for the given byte. Returns null if not a leaf. */
   function makeLeafExpr(byte: number): t.Expression | null {
     const config = EXPR_TABLE[byte]
     switch (config.nodeType) {
-      case 'NumericLiteral': return t.numericLiteral(pools.numbers[config.variant])
-      case 'Identifier': return t.identifier(pools.identifiers[config.variant])
-      case 'StringLiteral': return t.stringLiteral(pools.strings[config.variant])
+      case 'NumericLiteral': return t.numericLiteral(cosmeticNumber())
+      case 'StringLiteral': return t.stringLiteral(cosmeticString())
+      case 'Identifier': return t.identifier(cosmeticIdent())
       case 'BooleanLiteral': return t.booleanLiteral(config.variant === 1)
       case 'NullLiteral': return t.nullLiteral()
+      case 'BigIntLiteral': return t.bigIntLiteral(String(rng() % 100))
+      case 'ThisExpression': return t.thisExpression()
+      case 'RegExpLiteral': {
+        const flags = flagsFromBitmask(config.variant)
+        // Use a simple cosmetic pattern
+        const patterns = ['x', 'a', '\\d+', '\\w+', '.', 'ok', 'hi', 'ab']
+        const pattern = patterns[rng() % patterns.length]
+        return t.regExpLiteral(pattern, flags)
+      }
       default: return null
     }
   }
@@ -204,6 +215,16 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
   function pushStmt(s: Slot<t.Statement>) { work.push({ kind: 'stmt', slot: s }) }
   function pushBlock(s: Slot<t.Statement[]>) { work.push({ kind: 'block', slot: s }) }
   function pushAssemble(fn: () => void) { work.push({ kind: 'assemble', fn }) }
+
+  /** Generate cosmetic parameter names for arrow/function expressions */
+  function genParamNames(count: number): string[] {
+    const names: string[] = []
+    const base = 'abcdefghijklmnop'
+    for (let i = 0; i < count; i++) {
+      names.push(i < base.length ? base[i] : `p${i}`)
+    }
+    return names
+  }
 
   function scheduleExpr(s: Slot<t.Expression>): void {
     if (isPad()) { s.value = padLeafExpr(); return }
@@ -219,9 +240,33 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         pushExpr(r); pushExpr(l)
         break
       }
+      case 'LogicalExpression': {
+        const l = slot<t.Expression>(), r = slot<t.Expression>()
+        pushAssemble(() => { s.value = t.logicalExpression(LOGICAL_OP_POOL[config.variant] as any, l.value, r.value) })
+        pushExpr(r); pushExpr(l)
+        break
+      }
       case 'UnaryExpression': {
         const arg = slot<t.Expression>()
         pushAssemble(() => { s.value = t.unaryExpression(UNARY_OP_POOL[config.variant] as any, arg.value, true) })
+        pushExpr(arg)
+        break
+      }
+      case 'UpdateExpression': {
+        // variant: 0=++prefix, 1=++postfix, 2=--prefix, 3=--postfix
+        const opIdx = config.variant >> 1   // 0 or 1
+        const prefix = (config.variant & 1) === 0
+        const arg = slot<t.Expression>()
+        pushAssemble(() => {
+          // Build the update expression manually to avoid babel validation
+          // (babel rejects non-LValue arguments, but we need arbitrary expressions)
+          s.value = {
+            type: 'UpdateExpression',
+            operator: UPDATE_OP_POOL[opIdx],
+            argument: arg.value,
+            prefix,
+          } as any as t.UpdateExpression
+        })
         pushExpr(arg)
         break
       }
@@ -239,14 +284,38 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         pushExpr(callee)
         break
       }
+      case 'NewExpression': {
+        const callee = slot<t.Expression>()
+        const argSlots = Array.from({ length: config.variant }, () => slot<t.Expression>())
+        pushAssemble(() => { s.value = t.newExpression(callee.value, argSlots.map(a => a.value)) })
+        for (let i = argSlots.length - 1; i >= 0; i--) pushExpr(argSlots[i])
+        pushExpr(callee)
+        break
+      }
       case 'MemberExpression': {
-        if (config.variant === 8) {
+        if (config.variant === 1) {
+          // computed: obj[prop] — 2 data children
           const obj = slot<t.Expression>(), prop = slot<t.Expression>()
           pushAssemble(() => { s.value = t.memberExpression(obj.value, prop.value, true) })
           pushExpr(prop); pushExpr(obj)
         } else {
+          // non-computed: obj.prop — 1 data child (obj), property name is cosmetic
           const obj = slot<t.Expression>()
-          pushAssemble(() => { s.value = t.memberExpression(obj.value, t.identifier(pools.memberProps[config.variant]), false) })
+          pushAssemble(() => { s.value = t.memberExpression(obj.value, t.identifier(cosmeticIdent()), false) })
+          pushExpr(obj)
+        }
+        break
+      }
+      case 'OptionalMemberExpression': {
+        if (config.variant === 1) {
+          // computed: obj?.[prop] — 2 data children
+          const obj = slot<t.Expression>(), prop = slot<t.Expression>()
+          pushAssemble(() => { s.value = t.optionalMemberExpression(obj.value, prop.value, true, true) })
+          pushExpr(prop); pushExpr(obj)
+        } else {
+          // non-computed: obj?.prop — 1 data child (obj), property name is cosmetic
+          const obj = slot<t.Expression>()
+          pushAssemble(() => { s.value = t.optionalMemberExpression(obj.value, t.identifier(cosmeticIdent()), false, true) })
           pushExpr(obj)
         }
         break
@@ -267,11 +336,95 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         const pairs = Array.from({ length: config.variant }, () => ({ k: slot<t.Expression>(), v: slot<t.Expression>() }))
         pushAssemble(() => {
           s.value = t.objectExpression(pairs.map(p => {
-            const isComputed = !t.isIdentifier(p.k.value) && !t.isStringLiteral(p.k.value) && !t.isNumericLiteral(p.k.value)
-            return t.objectProperty(p.k.value, p.v.value, isComputed)
+            // Always use computed properties so both key and value are expression children
+            return t.objectProperty(p.k.value, p.v.value, true)
           }))
         })
         for (let i = pairs.length - 1; i >= 0; i--) { pushExpr(pairs[i].v); pushExpr(pairs[i].k) }
+        break
+      }
+      case 'SequenceExpression': {
+        // variant = element count - 2 (min 2 elements)
+        const count = config.variant + 2
+        const els = Array.from({ length: count }, () => slot<t.Expression>())
+        pushAssemble(() => { s.value = t.sequenceExpression(els.map(e => e.value)) })
+        for (let i = els.length - 1; i >= 0; i--) pushExpr(els[i])
+        break
+      }
+      case 'TemplateLiteral': {
+        // variant = expression count (0-7)
+        const exprCount = config.variant
+        const exprSlots = Array.from({ length: exprCount }, () => slot<t.Expression>())
+        pushAssemble(() => {
+          // quasis always has exprCount + 1 elements
+          const quasis = Array.from({ length: exprCount + 1 }, (_, i) =>
+            t.templateElement({ raw: '', cooked: '' }, i === exprCount)
+          )
+          s.value = t.templateLiteral(quasis, exprSlots.map(e => e.value))
+        })
+        for (let i = exprSlots.length - 1; i >= 0; i--) pushExpr(exprSlots[i])
+        break
+      }
+      case 'TaggedTemplateExpression': {
+        // variant = expression count in the template (0-7)
+        const exprCount = config.variant
+        const tag = slot<t.Expression>()
+        const exprSlots = Array.from({ length: exprCount }, () => slot<t.Expression>())
+        pushAssemble(() => {
+          const quasis = Array.from({ length: exprCount + 1 }, (_, i) =>
+            t.templateElement({ raw: '', cooked: '' }, i === exprCount)
+          )
+          const tpl = t.templateLiteral(quasis, exprSlots.map(e => e.value))
+          s.value = t.taggedTemplateExpression(tag.value, tpl)
+        })
+        for (let i = exprSlots.length - 1; i >= 0; i--) pushExpr(exprSlots[i])
+        pushExpr(tag)
+        break
+      }
+      case 'ArrowFunctionExpression': {
+        // variant = param count (0-15)
+        const paramCount = config.variant
+        const body = slot<t.Expression>()
+        pushAssemble(() => {
+          const params = genParamNames(paramCount).map(n => t.identifier(n))
+          s.value = t.arrowFunctionExpression(params, body.value)
+        })
+        pushExpr(body)
+        break
+      }
+      case 'FunctionExpression': {
+        // variant = param count (0-15)
+        const paramCount = config.variant
+        const body = slot<t.Expression>()
+        pushAssemble(() => {
+          const params = genParamNames(paramCount).map(n => t.identifier(n))
+          // Wrap the body expression in a return statement inside a block
+          const block = t.blockStatement([t.returnStatement(body.value)])
+          s.value = t.functionExpression(null, params, block)
+        })
+        pushExpr(body)
+        break
+      }
+      case 'SpreadElement': {
+        const arg = slot<t.Expression>()
+        pushAssemble(() => {
+          // SpreadElement is not an Expression in babel types, but we wrap in array
+          // Actually, SpreadElement gets used inside arrays/calls. We encode it as
+          // an array with one spread: [...arg] which the decoder sees as SpreadElement
+          // But wait — SpreadElement has a child expr. Let's just create it directly.
+          // The codegen will handle outputting it.
+          s.value = t.arrayExpression([t.spreadElement(arg.value)])
+        })
+        pushExpr(arg)
+        break
+      }
+      case 'ClassExpression': {
+        if (config.variant === 1) {
+          // has super — but super is cosmetic, we just need the flag
+          s.value = t.classExpression(null, t.identifier('Base'), t.classBody([]))
+        } else {
+          s.value = t.classExpression(null, null, t.classBody([]))
+        }
         break
       }
       default:

@@ -20,24 +20,14 @@ npm install @zojize/dead-drop
 import { encode, decode } from '@zojize/dead-drop'
 
 const js = encode(new TextEncoder().encode('attack at dawn'))
-// -> 'open:fail:tick:switch(CUBEUV_TEXEL_WIDTH){case $e: ...'
+// -> '501;56n;const _c=(_lval>>=(+((+((typeof ...'
 
-const bytes = decode(js)
+const bytes = decode(js)  // no options needed — data is in the AST structure
 new TextDecoder().decode(bytes) // -> 'attack at dawn'
 
-// With options: custom seed, pool factories, shared pools
-const js2 = encode(new TextEncoder().encode('hello'), {
-  seed: 42,
-  identifiers: (rand) => `myVar_${rand % 100}`,  // or ['foo', 'bar']
-  strings: ['custom_str', 'another'],
-  numbers: [1337, 9001],
-})
-
-// Custom pools (must match between encode and decode)
-import { DEFAULT_POOLS } from '@zojize/dead-drop'
-const pools = { ...DEFAULT_POOLS, varNames: ['x', 'y', 'z', ...DEFAULT_POOLS.varNames.slice(3)] }
-const js3 = encode(msg, { pools })
-const out = decode(js3, { pools })  // same pools → correct decode
+// Optional: custom seed changes cosmetic values (names, numbers, strings)
+// but the decoded bytes are always the same
+const js2 = encode(new TextEncoder().encode('hello'), { seed: 42 })
 ```
 
 ## CLI
@@ -106,27 +96,31 @@ while (bytes remain):
         'block' child -> consume a count byte, then that many statements
 ```
 
-Each node type stores its variant in a parser-safe property:
+Each expression byte is recovered from **structural** AST properties — literal
+values (names, strings, numbers) are cosmetic:
 
-| Node type | Variant stored in | Example |
+| Node type | Variant recovered from | Count |
 | --- | --- | --- |
-| `NumericLiteral` | `.value` from a pool of 76 numbers | `42`, `3.14`, `65535` |
-| `Identifier` | `.name` from a pool of 64 names | `$emit`, `Fog`, `AnimationClip` |
-| `StringLiteral` | `.value` from a pool of 32 words | `"DataView"`, `"IMG"`, `"vue"` |
-| `BinaryExpression` | `.operator` (16 operators) | `+`, `>>>`, `in` |
-| `VariableDeclaration` | `.kind` + declarator `.name` | `const ref = ...` |
-| `LabeledStatement` | `.label.name` from a pool of 56 | `retry: ...` |
-| `IfStatement` | `.alternate === null` (2 entries) | `if(x){...}` vs `if(x){...}else{...}` |
-| `ForStatement` | null-combo of init/test/update (8) | `for(;;)`, `for(x;y;)` |
-| `SwitchStatement` | `.cases.length` (0-15) | `switch(x){case a:case b:}` |
-| `TryStatement` | catch param `.name` (6 names) | `try{...}catch(err){...}` |
+| `RegExpLiteral` | flag combo (d,g,i,m,s,u = 2^6) | 64 |
+| `BinaryExpression` | `.operator` | 16 |
+| `CallExpression` | `.arguments.length` | 19 |
+| `NewExpression` | `.arguments.length` | 16 |
+| `AssignmentExpression` | `.operator` | 16 |
+| `ArrayExpression` | `.elements.length` | 16 |
+| `ObjectExpression` | `.properties.length` | 16 |
+| `ArrowFunctionExpression` | `.params.length` | 16 |
+| `FunctionExpression` | `.params.length` | 16 |
+| `SequenceExpression` | `.expressions.length` | 15 |
+| `UnaryExpression` | `.operator` | 7 |
+| `UpdateExpression` | `.operator` × `.prefix` | 4 |
+| `LogicalExpression` | `.operator` | 3 |
+| `BooleanLiteral` | `.value` (true/false) | 2 |
+| Leaf types | just node type | 6 |
 
-Identifier and literal pools are scraped from real minified codebases (React,
-Vue, Lodash, Three.js) so the output resembles authentic obfuscated code.
+The decoder takes only a string — `decode(js)` — no pools or options needed.
 
-When the message bytes run out, a seeded PRNG generates varied leaf
-expressions as padding. The length prefix tells the decoder exactly where the
-real data ends.
+When the message bytes run out, a seeded PRNG generates cosmetic leaf
+expressions as padding. The length prefix tells the decoder where data ends.
 
 ### Decoding: AST to bytes
 
@@ -173,26 +167,32 @@ Byte        Type                 Count   Children
 0x80-0xFF   VariableDeclaration  128     [expr]
 ```
 
-### Expression table layout
+### Expression table layout (fully structural)
+
+All 256 entries are recoverable from AST structure alone — no literal values:
 
 ```text
-Byte        Type                 Count   Children
------------ -------------------- ------- ------------------
-0x00-0x4B   NumericLiteral       76      (leaf)
-0x4C-0x8B   Identifier           64      (leaf)
-0x8C-0x9B   BinaryExpression     16      [expr, expr]
-0x9C-0xA2   UnaryExpression      7       [expr]
-0xA3        ConditionalExpression 1      [expr, expr, expr]
-0xA4-0xB3   CallExpression       16      [expr, N*expr]
-0xB4-0xBB   MemberExpression     8       [expr] (non-computed)
-0xBC        MemberExpression     1       [expr, expr] (computed)
-0xBD-0xDC   StringLiteral        32      (leaf)
-0xDD-0xEC   AssignmentExpression 16      [expr]
-0xED-0xF4   ArrayExpression      8       [N*expr]
-0xF5-0xFC   ObjectExpression     8       [N*(expr,expr)]
-0xFD        BooleanLiteral:true  1       (leaf)
-0xFE        BooleanLiteral:false 1       (leaf)
-0xFF        NullLiteral          1       (leaf)
+Byte        Type                        Count  Variant
+----------- --------------------------- ------ -----------------------
+0x00-0x07   Leaf types                  8      node type only
+0x08-0x47   RegExpLiteral               64     flag combo (2^6)
+0x48-0x57   BinaryExpression            16     operator
+0x58-0x5A   LogicalExpression           3      operator
+0x5B-0x6A   AssignmentExpression        16     operator
+0x6B-0x71   UnaryExpression             7      operator
+0x72-0x75   UpdateExpression            4      operator × prefix
+0x76        ConditionalExpression       1      type
+0x77-0x89   CallExpression              19     arg count
+0x8A-0x99   NewExpression               16     arg count
+0x9A-0x9D   Member/OptionalMember       4      computed flag
+0x9E-0xAD   ArrayExpression             16     element count
+0xAE-0xBD   ObjectExpression            16     prop count
+0xBE-0xCC   SequenceExpression          15     element count
+0xCD-0xDC   Template/TaggedTemplate     16     expression count
+0xDD-0xEC   ArrowFunctionExpression     16     param count
+0xED-0xFC   FunctionExpression          16     param count
+0xFD        SpreadElement               1      type
+0xFE-0xFF   ClassExpression             2      has/no superclass
 ```
 
 ## Design decisions
@@ -208,26 +208,18 @@ Byte        Type                 Count   Children
   codegen that handles our AST subset with correct parenthesization for
   operator precedence, numeric member access, and object/block ambiguity.
 
-- **Data lives in AST structure, not literal values.** The byte→node mapping
-  uses node types, operators, child counts, and pool indices as variants.
-  Literal values (identifier names, strings, numbers) are looked up from
-  pools — changing the pool changes the output appearance but not the data.
+- **All expression data is in AST structure.** The 256 expression table
+  entries are distinguished purely by node type, operator, child count,
+  boolean flags, and regex flag combos. Literal values (identifier names,
+  string values, numbers) are cosmetic — the decoder ignores them entirely.
+  `decode()` takes only a string, no options.
 
 - **Scope-aware declarations.** The encoder tracks `let`/`const` declarations
-  per block scope and labels per scope chain. On conflict, appends a `$N`
-  suffix that the decoder strips to recover the base pool name.
-
-- **Shared pools.** Both `encode()` and `decode()` accept a `pools` option.
-  Encoder and decoder must use matching pools for correct round-trips. Custom
-  pools let you control the output vocabulary. Default pools are scraped from
-  real minified codebases.
+  globally and labels per scope chain. On conflict, appends a `$N` suffix
+  that the decoder strips to recover the base name.
 
 - **`errorRecovery` parsing.** Babel's `errorRecovery` mode tolerates
   edge cases in the generated code.
-
-- **Customizable padding.** `encode()` accepts custom identifier/string/number
-  pools for padding — either static arrays or factory functions
-  `(rand: number) => T`.
 
 - **All statement bodies use blocks.** IfStatement, WhileStatement,
   ForStatement, DoWhileStatement, and LabeledStatement wrap bodies in `{...}`

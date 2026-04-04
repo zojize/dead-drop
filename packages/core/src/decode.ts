@@ -6,17 +6,15 @@ import {
   exprNodeKey,
   stmtNodeKey,
   BINARY_OP_POOL,
+  LOGICAL_OP_POOL,
   UNARY_OP_POOL,
+  UPDATE_OP_POOL,
   ASSIGN_OP_POOL,
   VAR_KIND_POOL,
-  DEFAULT_POOLS,
+  REGEXP_FLAGS,
+  DEFAULT_STMT_POOLS,
 } from './tables'
-import { type Pools, stripSuffix } from './pools'
-
-export interface DecodeOptions {
-  /** Custom pools matching the encoder's pools. Must match for correct decoding. */
-  pools?: Partial<Pools>
-}
+import { stripSuffix } from './pools'
 
 type WorkItem =
   | { kind: 'expr'; node: t.Node }
@@ -26,22 +24,24 @@ type WorkItem =
 /**
  * Decode JavaScript source code back into the original byte array.
  * Uses an iterative work stack to avoid call-stack overflow on deep ASTs.
+ *
+ * Expression bytes are recovered purely from AST structure (node types,
+ * operators, child counts, flags). No pool parameter needed.
+ *
+ * Statement bytes use hardcoded DEFAULT_STMT_POOLS for name-based lookups.
  */
-export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
-  const pools: Pools = { ...DEFAULT_POOLS, ...options?.pools }
+export function decode(jsSource: string): Uint8Array {
+  const pools = DEFAULT_STMT_POOLS
 
-  // Build fast reverse maps from the pools
-  const numericRev = new Map<number, number>(pools.numbers.map((v, i) => [v, i]))
-  const identRev = new Map<string, number>(pools.identifiers.map((v, i) => [v, i]))
-  const stringRev = new Map<string, number>(pools.strings.map((v, i) => [v, i]))
+  // Build fast reverse maps for statement pools
   const varNameRev = new Map<string, number>(pools.varNames.map((v, i) => [v, i]))
   const labelRev = new Map<string, number>(pools.labels.map((v, i) => [v, i]))
   const catchParamRev = new Map<string, number>(pools.catchParams.map((v, i) => [v, i]))
-  const memberPropRev = new Map<string, number>(pools.memberProps.map((v, i) => [v, i]))
 
   const ast = parse(jsSource, {
     allowReturnOutsideFunction: true,
     errorRecovery: true,
+    plugins: [['optionalChainingAssign', { version: '2023-07' }]],
   })
 
   const bytes: number[] = []
@@ -56,16 +56,43 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
     pushByte(body.length)
   }
 
+  /**
+   * Convert a RegExp flags string to a 6-bit bitmask.
+   */
+  function flagsToBitmask(flags: string): number {
+    let bitmask = 0
+    for (let i = 0; i < REGEXP_FLAGS.length; i++) {
+      if (flags.includes(REGEXP_FLAGS[i])) bitmask |= (1 << i)
+    }
+    return bitmask
+  }
+
   function processExpr(node: t.Node): void {
     switch (node.type) {
-      case 'NumericLiteral': {
-        const variant = numericRev.get(node.value)
-        bytes.push(variant !== undefined ? REVERSE_EXPR_TABLE.get(exprNodeKey('NumericLiteral', variant))! : 0)
+      case 'NumericLiteral':
+        bytes.push(REVERSE_EXPR_TABLE.get(exprNodeKey('NumericLiteral', 0))!)
         break
-      }
-      case 'Identifier': {
-        const variant = identRev.get(node.name)
-        bytes.push(variant !== undefined ? REVERSE_EXPR_TABLE.get(exprNodeKey('Identifier', variant))! : 0)
+      case 'StringLiteral':
+        bytes.push(REVERSE_EXPR_TABLE.get(exprNodeKey('StringLiteral', 0))!)
+        break
+      case 'Identifier':
+        bytes.push(REVERSE_EXPR_TABLE.get(exprNodeKey('Identifier', 0))!)
+        break
+      case 'BooleanLiteral':
+        bytes.push(REVERSE_EXPR_TABLE.get(exprNodeKey('BooleanLiteral', node.value ? 1 : 0))!)
+        break
+      case 'NullLiteral':
+        bytes.push(REVERSE_EXPR_TABLE.get(exprNodeKey('NullLiteral', 0))!)
+        break
+      case 'BigIntLiteral':
+        bytes.push(REVERSE_EXPR_TABLE.get(exprNodeKey('BigIntLiteral', 0))!)
+        break
+      case 'ThisExpression':
+        bytes.push(REVERSE_EXPR_TABLE.get(exprNodeKey('ThisExpression', 0))!)
+        break
+      case 'RegExpLiteral': {
+        const bitmask = flagsToBitmask(node.flags)
+        bytes.push(REVERSE_EXPR_TABLE.get(exprNodeKey('RegExpLiteral', bitmask))!)
         break
       }
       case 'BinaryExpression': {
@@ -74,9 +101,22 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         pushExpr(node.right); pushExpr(node.left)
         break
       }
+      case 'LogicalExpression': {
+        const opIdx = (LOGICAL_OP_POOL as readonly string[]).indexOf(node.operator)
+        bytes.push(REVERSE_EXPR_TABLE.get(exprNodeKey('LogicalExpression', opIdx))!)
+        pushExpr(node.right); pushExpr(node.left)
+        break
+      }
       case 'UnaryExpression': {
         const opIdx = (UNARY_OP_POOL as readonly string[]).indexOf(node.operator)
         bytes.push(REVERSE_EXPR_TABLE.get(exprNodeKey('UnaryExpression', opIdx))!)
+        pushExpr(node.argument)
+        break
+      }
+      case 'UpdateExpression': {
+        const opIdx = (UPDATE_OP_POOL as readonly string[]).indexOf(node.operator)
+        const variant = opIdx * 2 + (node.prefix ? 0 : 1)
+        bytes.push(REVERSE_EXPR_TABLE.get(exprNodeKey('UpdateExpression', variant))!)
         pushExpr(node.argument)
         break
       }
@@ -92,20 +132,34 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         pushExpr(node.callee)
         break
       }
-      case 'MemberExpression':
+      case 'NewExpression': {
+        const byte = REVERSE_EXPR_TABLE.get(exprNodeKey('NewExpression', node.arguments.length))
+        if (byte === undefined) throw new Error(`Unknown NewExpression argCount: ${node.arguments.length}`)
+        bytes.push(byte)
+        for (let i = node.arguments.length - 1; i >= 0; i--) pushExpr(node.arguments[i])
+        pushExpr(node.callee)
+        break
+      }
+      case 'MemberExpression': {
+        const variant = node.computed ? 1 : 0
+        bytes.push(REVERSE_EXPR_TABLE.get(exprNodeKey('MemberExpression', variant))!)
         if (node.computed) {
-          bytes.push(REVERSE_EXPR_TABLE.get(exprNodeKey('MemberExpression', 8))!)
-          pushExpr(node.property); pushExpr(node.object)
+          pushExpr(node.property as t.Expression); pushExpr(node.object)
         } else {
-          const propName = (node.property as t.Identifier).name
-          const propIdx = memberPropRev.get(propName)
-          bytes.push(propIdx !== undefined ? REVERSE_EXPR_TABLE.get(exprNodeKey('MemberExpression', propIdx))! : 0)
+          // non-computed: only object is a data child, property name is cosmetic
           pushExpr(node.object)
         }
         break
-      case 'StringLiteral': {
-        const variant = stringRev.get(node.value)
-        bytes.push(variant !== undefined ? REVERSE_EXPR_TABLE.get(exprNodeKey('StringLiteral', variant))! : 0)
+      }
+      case 'OptionalMemberExpression': {
+        const variant = node.computed ? 1 : 0
+        bytes.push(REVERSE_EXPR_TABLE.get(exprNodeKey('OptionalMemberExpression', variant))!)
+        if (node.computed) {
+          pushExpr(node.property as t.Expression); pushExpr(node.object)
+        } else {
+          // non-computed: only object is a data child, property name is cosmetic
+          pushExpr(node.object)
+        }
         break
       }
       case 'AssignmentExpression': {
@@ -115,6 +169,12 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         break
       }
       case 'ArrayExpression': {
+        // Check if this is a SpreadElement wrapper: [...arg]
+        if (node.elements.length === 1 && node.elements[0]?.type === 'SpreadElement') {
+          bytes.push(REVERSE_EXPR_TABLE.get(exprNodeKey('SpreadElement', 0))!)
+          pushExpr((node.elements[0] as t.SpreadElement).argument)
+          break
+        }
         const byte = REVERSE_EXPR_TABLE.get(exprNodeKey('ArrayExpression', node.elements.length))
         if (byte === undefined) throw new Error(`Unknown ArrayExpression count: ${node.elements.length}`)
         bytes.push(byte)
@@ -127,16 +187,56 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         bytes.push(byte)
         for (let i = node.properties.length - 1; i >= 0; i--) {
           const p = node.properties[i] as t.ObjectProperty
-          pushExpr(p.value); pushExpr(p.key)
+          pushExpr(p.value as t.Expression); pushExpr(p.key as t.Expression)
         }
         break
       }
-      case 'BooleanLiteral':
-        bytes.push(REVERSE_EXPR_TABLE.get(exprNodeKey('BooleanLiteral', node.value ? 1 : 0))!)
+      case 'SequenceExpression': {
+        const count = node.expressions.length
+        const variant = count - 2   // min 2 elements
+        bytes.push(REVERSE_EXPR_TABLE.get(exprNodeKey('SequenceExpression', variant))!)
+        for (let i = count - 1; i >= 0; i--) pushExpr(node.expressions[i])
         break
-      case 'NullLiteral':
-        bytes.push(REVERSE_EXPR_TABLE.get(exprNodeKey('NullLiteral', 0))!)
+      }
+      case 'TemplateLiteral': {
+        const exprCount = node.expressions.length
+        bytes.push(REVERSE_EXPR_TABLE.get(exprNodeKey('TemplateLiteral', exprCount))!)
+        for (let i = exprCount - 1; i >= 0; i--) pushExpr(node.expressions[i])
         break
+      }
+      case 'TaggedTemplateExpression': {
+        const exprCount = node.quasi.expressions.length
+        bytes.push(REVERSE_EXPR_TABLE.get(exprNodeKey('TaggedTemplateExpression', exprCount))!)
+        for (let i = exprCount - 1; i >= 0; i--) pushExpr(node.quasi.expressions[i])
+        pushExpr(node.tag)
+        break
+      }
+      case 'ArrowFunctionExpression': {
+        const paramCount = node.params.length
+        bytes.push(REVERSE_EXPR_TABLE.get(exprNodeKey('ArrowFunctionExpression', paramCount))!)
+        if (node.body.type === 'BlockStatement') {
+          const retStmt = (node.body as t.BlockStatement).body.find(s => s.type === 'ReturnStatement') as t.ReturnStatement | undefined
+          if (retStmt?.argument) pushExpr(retStmt.argument)
+        } else {
+          pushExpr(node.body as t.Expression)
+        }
+        break
+      }
+      case 'FunctionExpression': {
+        const paramCount = node.params.length
+        bytes.push(REVERSE_EXPR_TABLE.get(exprNodeKey('FunctionExpression', paramCount))!)
+        const body = node.body as t.BlockStatement
+        if (body.body.length > 0 && body.body[0].type === 'ReturnStatement') {
+          const retStmt = body.body[0] as t.ReturnStatement
+          if (retStmt.argument) pushExpr(retStmt.argument)
+        }
+        break
+      }
+      case 'ClassExpression': {
+        const variant = node.superClass !== null ? 1 : 0
+        bytes.push(REVERSE_EXPR_TABLE.get(exprNodeKey('ClassExpression', variant))!)
+        break
+      }
       default:
         throw new Error(`Unknown expression type: ${node.type}`)
     }
@@ -230,14 +330,12 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         const labelIdx = labelRev.get(baseName)
         if (labelIdx === undefined) { bytes.push(0) }
         else { bytes.push(REVERSE_STMT_TABLE.get(stmtNodeKey('LabeledStatement', labelIdx))!) }
-        // Body is always a BlockStatement
         pushBlockBody((n.body as t.BlockStatement).body)
         break
       }
       case 'VariableDeclaration': {
         const n = node as t.VariableDeclaration
         const kindIndex = (VAR_KIND_POOL as readonly string[]).indexOf(n.kind)
-        // Strip suffix to recover base var name → variant → byte
         const baseName = stripSuffix((n.declarations[0].id as t.Identifier).name)
         const nameIndex = varNameRev.get(baseName)
         if (nameIndex === undefined) { bytes.push(0) }

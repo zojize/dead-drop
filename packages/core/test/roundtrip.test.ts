@@ -3,18 +3,10 @@ import { parse } from '@babel/parser'
 import { TextEncoder } from 'node:util'
 import { encode } from '../src/encode'
 import { decode } from '../src/decode'
-import { DEFAULT_POOLS } from '../src/tables'
-import type { Pools } from '../src/pools'
 
 function testRoundTrip(input: Uint8Array) {
   const js = encode(input)
   const output = decode(js)
-  expect(Array.from(output)).toEqual(Array.from(input))
-}
-
-function testRoundTripWithPools(input: Uint8Array, pools: Pools) {
-  const js = encode(input, { pools })
-  const output = decode(js, { pools })
   expect(Array.from(output)).toEqual(Array.from(input))
 }
 
@@ -134,17 +126,12 @@ describe('fuzz', () => {
     expect(outputs.size).toBe(20)
   })
 
-  it('seed + custom pools + fuzz', () => {
+  it('seed + fuzz', () => {
     for (let seed = 0; seed < 20; seed++) {
       const len = 20 + seed * 5
       const data = new Uint8Array(len)
       crypto.getRandomValues(data)
-      const js = encode(data, {
-        seed,
-        identifiers: ['alpha', 'beta', 'gamma'],
-        strings: ['test_str'],
-        numbers: [42424, 13131],
-      })
+      const js = encode(data, { seed })
       const out = decode(js)
       expect(Array.from(out)).toEqual(Array.from(data))
     }
@@ -152,168 +139,89 @@ describe('fuzz', () => {
 })
 
 // ─── Data-in-AST invariant tests ────────────────────────────────────────────
-// Confirm that ALL data is encoded in the AST structure, not in literal values.
-// Changing pools (identifier names, strings, numbers, var names, labels, etc.)
-// must not affect the decoded output — only the JS appearance changes.
+// Confirm that ALL expression data is encoded in the AST structure, not in
+// literal values. The decoder takes ONLY a string — no pools, no options.
+// Encoding with different seeds (which changes cosmetic values like identifier
+// names, numbers, strings) must always decode to the same bytes.
 
 describe('data lives in AST structure, not literal values', () => {
-  /** Generate a completely randomized pool set. */
-  function randomPools(seed: number): Pools {
-    const rng = mulberry32(seed)
-    const randStr = (prefix: string, n: number) => {
-      const set = new Set<string>()
-      while (set.size < n) set.add(`${prefix}_${rng()}_${set.size}`)
-      return [...set]
-    }
-    const randNums = (n: number) => {
-      const set = new Set<number>()
-      while (set.size < n) set.add(rng() % 1000000)
-      return [...set]
-    }
-    return {
-      identifiers: randStr('id', 64),
-      strings: randStr('s', 32),
-      numbers: randNums(76),
-      varNames: randStr('v', 54),
-      labels: randStr('L', 56),
-      catchParams: randStr('err', 6),
-      memberProps: randStr('p', 8),
-    }
-  }
-
-  function mulberry32(seed: number) {
-    let s = seed | 0
-    return () => {
-      s = s + 0x6D2B79F5 | 0
-      let z = Math.imul(s ^ s >>> 15, 1 | s)
-      z = z + Math.imul(z ^ z >>> 7, 61 | z) ^ z
-      return ((z ^ z >>> 14) >>> 0)
-    }
-  }
-
-  it('round-trips with completely randomized pools', () => {
-    const msg = new TextEncoder().encode('data in AST, not in names')
-    for (let seed = 0; seed < 30; seed++) {
-      const pools = randomPools(seed)
-      testRoundTripWithPools(msg, pools)
-    }
+  it('decode signature takes only a string', () => {
+    const js = encode(new TextEncoder().encode('test'))
+    // decode(jsSource: string): Uint8Array — no second param
+    const result = decode(js)
+    expect(result).toBeInstanceOf(Uint8Array)
   })
 
-  it('same message, different pools → same decoded bytes', () => {
+  it('same message, different seeds -> same decoded bytes', () => {
     const msg = new TextEncoder().encode('the quick brown fox')
     for (let seed = 0; seed < 20; seed++) {
-      const pools = randomPools(seed)
-      const js = encode(msg, { pools })
-      const out = decode(js, { pools })
+      const js = encode(msg, { seed })
+      const out = decode(js)
       expect(Array.from(out)).toEqual(Array.from(msg))
     }
   })
 
-  it('same message, different pools → different JS output', () => {
-    const msg = new TextEncoder().encode('hello world')
-    const outputs = new Set<string>()
-    for (let seed = 0; seed < 10; seed++) {
-      outputs.add(encode(msg, { pools: randomPools(seed) }))
-    }
-    expect(outputs.size).toBe(10)
-  })
-
-  it('fuzz: random data × random pools (500 iterations)', () => {
+  it('fuzz: random data x different seeds (500 iterations)', () => {
     for (let i = 0; i < 500; i++) {
       const len = Math.floor(Math.random() * 100) + 1
       const data = new Uint8Array(len)
       crypto.getRandomValues(data)
-      const pools = randomPools(i)
-      testRoundTripWithPools(data, pools)
+      const seed = i * 7 + 13
+      const js = encode(data, { seed })
+      const out = decode(js)
+      expect(Array.from(out)).toEqual(Array.from(data))
     }
   })
 
-  it('adversarial: all same byte × random pools', () => {
+  it('adversarial: all same byte x different seeds', () => {
     for (let b = 0; b < 256; b++) {
       const data = new Uint8Array(10).fill(b)
-      const pools = randomPools(b)
-      testRoundTripWithPools(data, pools)
+      const js = encode(data, { seed: b * 31 })
+      const out = decode(js)
+      expect(Array.from(out)).toEqual(Array.from(data))
     }
   })
 
-  it('swapping only identifiers preserves round-trip', () => {
-    const msg = new TextEncoder().encode('identifier swap test')
-    const pools: Pools = {
-      ...DEFAULT_POOLS,
-      identifiers: Array.from({ length: 64 }, (_, i) => `custom_ident_${i}`),
-    }
-    testRoundTripWithPools(msg, pools)
-  })
-
-  it('swapping only var names preserves round-trip', () => {
-    const msg = new TextEncoder().encode('var name swap test')
-    const pools: Pools = {
-      ...DEFAULT_POOLS,
-      varNames: Array.from({ length: 54 }, (_, i) => `x${i}`),
-    }
-    testRoundTripWithPools(msg, pools)
-  })
-
-  it('swapping only labels preserves round-trip', () => {
-    const msg = new TextEncoder().encode('label swap test')
-    const pools: Pools = {
-      ...DEFAULT_POOLS,
-      labels: Array.from({ length: 56 }, (_, i) => `lbl${i}`),
-    }
-    testRoundTripWithPools(msg, pools)
-  })
-
-  it('swapping only numbers preserves round-trip', () => {
-    const msg = new TextEncoder().encode('number swap test')
-    const pools: Pools = {
-      ...DEFAULT_POOLS,
-      numbers: Array.from({ length: 76 }, (_, i) => i * 1000 + 7),
-    }
-    testRoundTripWithPools(msg, pools)
-  })
-
-  it('swapping only strings preserves round-trip', () => {
-    const msg = new TextEncoder().encode('string swap test')
-    const pools: Pools = {
-      ...DEFAULT_POOLS,
-      strings: Array.from({ length: 32 }, (_, i) => `word_${i}`),
-    }
-    testRoundTripWithPools(msg, pools)
-  })
-
-  it('swapping only member props preserves round-trip', () => {
-    const msg = new TextEncoder().encode('member prop swap test')
-    const pools: Pools = {
-      ...DEFAULT_POOLS,
-      memberProps: ['aa', 'bb', 'cc', 'dd', 'ee', 'ff', 'gg', 'hh'],
-    }
-    testRoundTripWithPools(msg, pools)
-  })
-
-  it('swapping only catch params preserves round-trip', () => {
-    const msg = new TextEncoder().encode('catch param swap test')
-    const pools: Pools = {
-      ...DEFAULT_POOLS,
-      catchParams: ['c0', 'c1', 'c2', 'c3', 'c4', 'c5'],
-    }
-    testRoundTripWithPools(msg, pools)
-  })
-
-  it('scope tracking: repeated let/const with random pools', () => {
-    // Byte 0x42 = VariableDeclaration const tmp. Repeating it tests scope suffix handling.
-    for (let poolSeed = 0; poolSeed < 20; poolSeed++) {
-      const pools = randomPools(poolSeed)
-      const data = new Uint8Array(20).fill(0x42)
-      testRoundTripWithPools(data, pools)
+  it('cosmetic values do not affect decoding', () => {
+    // Encode the same message with many different seeds — all cosmetic
+    // values (identifier names, numbers, strings) will be different,
+    // but decode must always return the same bytes.
+    const msg = new TextEncoder().encode('hello world')
+    const expected = Array.from(msg)
+    for (let seed = 0; seed < 50; seed++) {
+      const js = encode(msg, { seed })
+      const out = decode(js)
+      expect(Array.from(out)).toEqual(expected)
     }
   })
 
-  it('scope tracking: repeated labels with random pools', () => {
+  it('scope tracking: repeated let/const declarations', () => {
+    // Byte 0x42 = VariableDeclaration. Repeating tests scope suffix handling.
+    const data = new Uint8Array(20).fill(0x42)
+    testRoundTrip(data)
+  })
+
+  it('scope tracking: repeated labels', () => {
     // Byte 0x60 = LabeledStatement. Repeating tests label suffix handling.
-    for (let poolSeed = 0; poolSeed < 20; poolSeed++) {
-      const pools = randomPools(poolSeed)
+    const data = new Uint8Array(15).fill(0x60)
+    testRoundTrip(data)
+  })
+
+  it('scope tracking: repeated let/const with different seeds', () => {
+    for (let seed = 0; seed < 20; seed++) {
+      const data = new Uint8Array(20).fill(0x42)
+      const js = encode(data, { seed })
+      const out = decode(js)
+      expect(Array.from(out)).toEqual(Array.from(data))
+    }
+  })
+
+  it('scope tracking: repeated labels with different seeds', () => {
+    for (let seed = 0; seed < 20; seed++) {
       const data = new Uint8Array(15).fill(0x60)
-      testRoundTripWithPools(data, pools)
+      const js = encode(data, { seed })
+      const out = decode(js)
+      expect(Array.from(out)).toEqual(Array.from(data))
     }
   })
 })

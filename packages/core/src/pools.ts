@@ -1,12 +1,15 @@
 /**
- * Pool configuration shared between encoder and decoder.
- * Pools map variant indices to display values. The AST structure (which
- * variant index was chosen) carries the data; the display values are cosmetic.
+ * Pool types for statement-level name mapping.
+ *
+ * Statement pools (var names, labels, catch params, member props) are
+ * hardcoded in DEFAULT_STMT_POOLS and used by both encoder and decoder.
+ * No pool parameter is needed for decoding.
+ *
+ * Expression encoding is fully structural — no pools needed.
  */
-export interface Pools {
-  identifiers: readonly string[]   // 64 entries (expression Identifier names)
-  strings: readonly string[]       // 32 entries (StringLiteral values)
-  numbers: readonly number[]       // 76 entries (NumericLiteral values)
+
+/** Statement-level pools: hardcoded in both encoder and decoder. */
+export interface StatementPools {
   varNames: readonly string[]      // 54 entries (VariableDeclaration declarator names)
   labels: readonly string[]        // 56 entries (LabeledStatement label names)
   catchParams: readonly string[]   // 6 entries (TryStatement catch param names)
