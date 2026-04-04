@@ -137,29 +137,24 @@ describe('fuzz', () => {
     expect(Array.from(out)).toEqual(Array.from(msg))
   })
 
-  it('padFactory round-trips correctly', () => {
+  it('factory functions round-trip correctly', () => {
     const msg = new TextEncoder().encode('factory test')
     const js = encode(msg, {
-      padFactory: (rand) => rand % 2 === 0 ? `gen_${rand}` : rand * 3,
+      identifiers: (rand) => `id_${rand % 100}`,
+      strings: (rand) => `str_${rand % 50}`,
+      numbers: (rand) => rand % 10000,
     })
     const out = decode(js)
     expect(Array.from(out)).toEqual(Array.from(msg))
   })
 
-  it('padFactory output appears in encoded JS', () => {
-    const msg = new TextEncoder().encode('hi')
+  it('factory output appears in encoded JS', () => {
+    const msg = new TextEncoder().encode('hello world, this needs enough padding')
     const js = encode(msg, {
       seed: 42,
-      padFactory: () => 'CUSTOM_PAD_VALUE',
+      strings: () => 'CUSTOM_VALUE',
     })
-    expect(js.includes('CUSTOM_PAD_VALUE')).toBe(true)
-  })
-
-  it('options object backward-compatible with number seed', () => {
-    const msg = new TextEncoder().encode('compat test')
-    const a = encode(msg, 123)
-    const b = encode(msg, { seed: 123 })
-    expect(a).toBe(b)
+    expect(js.includes('CUSTOM_VALUE')).toBe(true)
   })
 
   it('seed + custom pools + fuzz', () => {

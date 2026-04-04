@@ -217,7 +217,9 @@ export function decode(jsSource: string): Uint8Array {
       case 'LabeledStatement': {
         const n = node as t.LabeledStatement
         const labelIdx = (LABEL_POOL as readonly string[]).indexOf(n.label.name)
-        bytes.push(REVERSE_STMT_TABLE.get(stmtNodeKey('LabeledStatement', labelIdx))!)
+        // Unknown labels come from scope-conflict fallback — push 0 (discarded by length prefix)
+        if (labelIdx === -1) { bytes.push(0) }
+        else { bytes.push(REVERSE_STMT_TABLE.get(stmtNodeKey('LabeledStatement', labelIdx))!) }
         pushStmt(n.body)
         break
       }
@@ -225,7 +227,9 @@ export function decode(jsSource: string): Uint8Array {
         const n = node as t.VariableDeclaration
         const kindIndex = (VAR_KIND_POOL as readonly string[]).indexOf(n.kind)
         const nameIndex = (VAR_DECL_NAME_POOL as readonly string[]).indexOf((n.declarations[0].id as t.Identifier).name)
-        bytes.push(REVERSE_STMT_TABLE.get(stmtNodeKey('VariableDeclaration', nameIndex * 3 + kindIndex))!)
+        // Unknown names come from scope-conflict fallback — push 0 (discarded by length prefix)
+        if (nameIndex === -1) { bytes.push(0) }
+        else { bytes.push(REVERSE_STMT_TABLE.get(stmtNodeKey('VariableDeclaration', nameIndex * 3 + kindIndex))!) }
         pushExpr(n.declarations[0].init!)
         break
       }

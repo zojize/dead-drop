@@ -36,13 +36,24 @@ function createPadRng(seed: number) {
   }
 }
 
+// ─── Types ──────────────────────────────────────────────────────────────────
+
+type PoolOrFactory<T> = T[] | ((rand: number) => T)
+
+export interface EncodeOptions {
+  /** Seed for the PRNG that generates padding expressions. Defaults to message length. */
+  seed?: number
+  /** Custom identifier names for padding. Array or factory. Merged with built-in pool. */
+  identifiers?: PoolOrFactory<string>
+  /** Custom string literals for padding. Array or factory. Merged with built-in pool. */
+  strings?: PoolOrFactory<string>
+  /** Custom numeric literals for padding. Array or factory. Merged with built-in pool. */
+  numbers?: PoolOrFactory<number>
+  /** Custom label names for padding. Array or factory. Merged with built-in pool. */
+  labels?: PoolOrFactory<string>
+}
+
 // ─── Iterative AST builder ──────────────────────────────────────────────────
-// Instead of recursive buildExpression/buildStatement, we use an explicit
-// work stack. Each item is either:
-//   { kind: 'expr', slot }   — build an expression and store in slot
-//   { kind: 'stmt', slot }   — build a statement and store in slot
-//   { kind: 'block', slot }  — build a block (count + stmts) and store in slot
-//   { kind: 'assemble', fn } — call fn() to assemble parent from children
 
 type Slot<T> = { value: T }
 type WorkItem =
@@ -51,24 +62,11 @@ type WorkItem =
   | { kind: 'block'; slot: Slot<t.Statement[]> }
   | { kind: 'assemble'; fn: () => void }
 
-export interface EncodeOptions {
-  /** Seed for the PRNG that generates padding expressions. Defaults to message length. */
-  seed?: number
-  /** Custom identifier names to randomly pick from for padding. Merged with built-in pool. */
-  identifiers?: string[]
-  /** Custom string literals to randomly pick from for padding. Merged with built-in pool. */
-  strings?: string[]
-  /** Custom numeric literals to randomly pick from for padding. Merged with built-in pool. */
-  numbers?: number[]
-  /** Factory function for generating custom padding literals. Called with a random number. */
-  padFactory?: (rand: number) => string | number
-}
-
 /**
  * Encode a byte array into syntactically valid JavaScript source code.
  */
-export function encode(message: Uint8Array, options?: EncodeOptions | number): string {
-  const opts: EncodeOptions = typeof options === 'number' ? { seed: options } : (options ?? {})
+export function encode(message: Uint8Array, options?: EncodeOptions): string {
+  const opts = options ?? {}
 
   const length = message.length
   const prefixed = new Uint8Array(4 + length)
@@ -82,34 +80,36 @@ export function encode(message: Uint8Array, options?: EncodeOptions | number): s
   const rng = createPadRng(opts.seed ?? length)
   const isPad = () => cursor >= prefixed.length
 
-  // Build custom padding pools by merging user-provided values with built-ins
-  const padIdents = opts.identifiers ? [...IDENT_POOL, ...opts.identifiers] : IDENT_POOL as unknown as string[]
-  const padStrings = opts.strings ? [...STRING_POOL, ...opts.strings] : STRING_POOL as unknown as string[]
-  const padNumbers = opts.numbers ? [...NUMERIC_POOL, ...opts.numbers] : NUMERIC_POOL as unknown as number[]
+  // Resolve pool-or-factory into a pick function
+  function pickFrom<T>(builtIn: readonly T[], custom: PoolOrFactory<T> | undefined): (rand: number) => T {
+    if (!custom) return (rand) => builtIn[rand % builtIn.length]
+    if (typeof custom === 'function') {
+      const factory = custom as (rand: number) => T
+      return (rand) => rand % 3 === 0 ? factory(rand) : builtIn[rand % builtIn.length]
+    }
+    const merged = [...builtIn, ...custom]
+    return (rand) => merged[rand % merged.length]
+  }
+
+  const pickIdent = pickFrom(IDENT_POOL, opts.identifiers)
+  const pickString = pickFrom(STRING_POOL, opts.strings)
+  const pickNumber = pickFrom(NUMERIC_POOL, opts.numbers)
 
   function readByte(): number {
     return prefixed[cursor++]
   }
 
   function padLeafExpr(): t.Expression {
-    // If user provided a factory, use it 50% of the time
-    if (opts.padFactory && rng() % 2 === 0) {
-      const val = opts.padFactory(rng())
-      return typeof val === 'number' ? t.numericLiteral(val) : t.stringLiteral(val)
+    const r = rng()
+    switch (r % 5) {
+      case 0: return t.numericLiteral(pickNumber(rng()))
+      case 1: return t.identifier(pickIdent(rng()))
+      case 2: return t.stringLiteral(pickString(rng()))
+      case 3: return t.booleanLiteral(rng() % 2 === 0)
+      default: return t.nullLiteral()
     }
-    // Randomly pick from: identifiers, strings, numbers, boolean, null
-    const total = padIdents.length + padStrings.length + padNumbers.length + 3
-    const r = rng() % total
-    if (r < padNumbers.length) return t.numericLiteral(padNumbers[r])
-    if (r < padNumbers.length + padIdents.length) return t.identifier(padIdents[r - padNumbers.length])
-    if (r < padNumbers.length + padIdents.length + padStrings.length) return t.stringLiteral(padStrings[r - padNumbers.length - padIdents.length])
-    const remainder = r - padNumbers.length - padIdents.length - padStrings.length
-    if (remainder === 0) return t.booleanLiteral(true)
-    if (remainder === 1) return t.booleanLiteral(false)
-    return t.nullLiteral()
   }
 
-  /** Make a leaf expression from a byte without recursion. */
   function makeLeafExpr(byte: number): t.Expression | null {
     const config = EXPR_TABLE[byte]
     switch (config.nodeType) {
@@ -118,12 +118,10 @@ export function encode(message: Uint8Array, options?: EncodeOptions | number): s
       case 'StringLiteral': return t.stringLiteral(STRING_POOL[config.variant])
       case 'BooleanLiteral': return t.booleanLiteral(config.variant === 1)
       case 'NullLiteral': return t.nullLiteral()
-      default: return null // not a leaf
+      default: return null
     }
   }
 
-  // The work stack drives the iterative build. Items are processed LIFO.
-  // Push children in REVERSE order so they're processed left-to-right.
   const work: WorkItem[] = []
 
   function slot<T>(initial?: T): Slot<T> {
@@ -344,7 +342,6 @@ export function encode(message: Uint8Array, options?: EncodeOptions | number): s
     }
   }
 
-  // Build top-level statements iteratively
   const body: t.Statement[] = []
   while (cursor < prefixed.length) {
     const s = slot<t.Statement>()

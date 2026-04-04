@@ -17,13 +17,21 @@ npm install @zojize/dead-drop
 ## Quick start
 
 ```typescript
-import { encode, decode } from 'dead-drop'
+import { encode, decode } from '@zojize/dead-drop'
 
 const js = encode(new TextEncoder().encode('attack at dawn'))
 // -> 'open:fail:tick:switch(CUBEUV_TEXEL_WIDTH){case $e: ...'
 
 const bytes = decode(js)
 new TextDecoder().decode(bytes) // -> 'attack at dawn'
+
+// With options: custom seed, pool factories, static pools
+const js2 = encode(new TextEncoder().encode('hello'), {
+  seed: 42,
+  identifiers: (rand) => `myVar_${rand % 100}`,  // or ['foo', 'bar']
+  strings: ['custom_str', 'another'],
+  numbers: [1337, 9001],
+})
 ```
 
 ## CLI
@@ -183,8 +191,8 @@ Byte        Type                 Count   Children
 
 ## Design decisions
 
-- **Code doesn't need to run.** It just needs to parse. No scope analysis,
-  no type correctness, no runtime semantics.
+- **Code doesn't need to run.** It just needs to parse. No type correctness,
+  no runtime semantics.
 
 - **Fully iterative.** Encoder, decoder, and code generator all use explicit
   work stacks instead of recursion, so large messages (10KB+) don't overflow
@@ -194,9 +202,16 @@ Byte        Type                 Count   Children
   codegen that handles our AST subset with correct parenthesization for
   operator precedence, numeric member access, and object/block ambiguity.
 
-- **`errorRecovery` parsing.** The encoder freely produces `let`/`const`
-  redeclarations and duplicate labels. Babel's `errorRecovery` mode parses
-  these into a correct AST structure despite the semantic errors.
+- **Scope-aware declarations.** The encoder tracks `let`/`const` declarations
+  per block scope and generates unique fallback names to avoid redeclaration
+  errors. `var` declarations are unrestricted (JS allows redeclaration).
+
+- **`errorRecovery` parsing.** Babel's `errorRecovery` mode tolerates
+  duplicate labels and edge cases in the generated code.
+
+- **Customizable pools.** `encode()` accepts an options object with custom
+  identifier/string/number pools — either static arrays or factory functions
+  `(rand: number) => T`. Custom values are used in padding expressions.
 
 - **IfStatement uses explicit blocks.** Wraps if-else branches in `{...}` to
   avoid dangling-else ambiguity during the codegen-then-parse round-trip.
