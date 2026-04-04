@@ -54,14 +54,13 @@ export function decode(jsSource: string): Uint8Array {
     switch (node.type) {
       case 'NumericLiteral': {
         const variant = NUMERIC_REV.get(node.value)
-        if (variant === undefined) throw new Error(`Unknown NumericLiteral: ${node.value}`)
-        bytes.push(REVERSE_EXPR_TABLE.get(exprNodeKey('NumericLiteral', variant))!)
+        // Unknown values come from custom padding pools — push 0 (discarded by length prefix)
+        bytes.push(variant !== undefined ? REVERSE_EXPR_TABLE.get(exprNodeKey('NumericLiteral', variant))! : 0)
         break
       }
       case 'Identifier': {
         const variant = IDENT_REV.get(node.name)
-        if (variant === undefined) throw new Error(`Unknown Identifier: ${node.name}`)
-        bytes.push(REVERSE_EXPR_TABLE.get(exprNodeKey('Identifier', variant))!)
+        bytes.push(variant !== undefined ? REVERSE_EXPR_TABLE.get(exprNodeKey('Identifier', variant))! : 0)
         break
       }
       case 'BinaryExpression': {
@@ -100,8 +99,7 @@ export function decode(jsSource: string): Uint8Array {
         break
       case 'StringLiteral': {
         const variant = STRING_REV.get(node.value)
-        if (variant === undefined) throw new Error(`Unknown StringLiteral: ${node.value}`)
-        bytes.push(REVERSE_EXPR_TABLE.get(exprNodeKey('StringLiteral', variant))!)
+        bytes.push(variant !== undefined ? REVERSE_EXPR_TABLE.get(exprNodeKey('StringLiteral', variant))! : 0)
         break
       }
       case 'AssignmentExpression': {

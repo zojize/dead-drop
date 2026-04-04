@@ -53,7 +53,7 @@ export function Playground() {
     try {
       setError('')
       if (!input) { setEncodedRaw(''); setDecoded(''); return }
-      setEncodedRaw(encode(new TextEncoder().encode(input), seed))
+      setEncodedRaw(encode(new TextEncoder().encode(input), { seed }))
     } catch (e: any) { setError(e.message) }
   }, [input, seed])
 
@@ -114,7 +114,7 @@ export function Playground() {
             autoFocus
           />
           <div className="sp-footer">
-            <span>dead-drop</span>
+            <a href="https://github.com/zojize/dead-drop" target="_blank" rel="noopener" style={{ color: 'inherit', textDecoration: 'none' }}>dead-drop</a>
             <div className="sp-seed">
               <label>seed</label>
               <input

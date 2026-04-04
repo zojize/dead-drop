@@ -51,10 +51,25 @@ type WorkItem =
   | { kind: 'block'; slot: Slot<t.Statement[]> }
   | { kind: 'assemble'; fn: () => void }
 
+export interface EncodeOptions {
+  /** Seed for the PRNG that generates padding expressions. Defaults to message length. */
+  seed?: number
+  /** Custom identifier names to randomly pick from for padding. Merged with built-in pool. */
+  identifiers?: string[]
+  /** Custom string literals to randomly pick from for padding. Merged with built-in pool. */
+  strings?: string[]
+  /** Custom numeric literals to randomly pick from for padding. Merged with built-in pool. */
+  numbers?: number[]
+  /** Factory function for generating custom padding literals. Called with a random number. */
+  padFactory?: (rand: number) => string | number
+}
+
 /**
  * Encode a byte array into syntactically valid JavaScript source code.
  */
-export function encode(message: Uint8Array, seed?: number): string {
+export function encode(message: Uint8Array, options?: EncodeOptions | number): string {
+  const opts: EncodeOptions = typeof options === 'number' ? { seed: options } : (options ?? {})
+
   const length = message.length
   const prefixed = new Uint8Array(4 + length)
   prefixed[0] = (length >>> 24) & 0xFF
@@ -64,24 +79,34 @@ export function encode(message: Uint8Array, seed?: number): string {
   prefixed.set(message, 4)
 
   let cursor = 0
-  const rng = createPadRng(seed ?? length)
+  const rng = createPadRng(opts.seed ?? length)
   const isPad = () => cursor >= prefixed.length
+
+  // Build custom padding pools by merging user-provided values with built-ins
+  const padIdents = opts.identifiers ? [...IDENT_POOL, ...opts.identifiers] : IDENT_POOL as unknown as string[]
+  const padStrings = opts.strings ? [...STRING_POOL, ...opts.strings] : STRING_POOL as unknown as string[]
+  const padNumbers = opts.numbers ? [...NUMERIC_POOL, ...opts.numbers] : NUMERIC_POOL as unknown as number[]
 
   function readByte(): number {
     return prefixed[cursor++]
   }
 
   function padLeafExpr(): t.Expression {
-    const byte = LEAF_EXPR_BYTES[rng() % LEAF_EXPR_BYTES.length]
-    const config = EXPR_TABLE[byte]
-    switch (config.nodeType) {
-      case 'NumericLiteral': return t.numericLiteral(NUMERIC_POOL[config.variant])
-      case 'Identifier': return t.identifier(IDENT_POOL[config.variant])
-      case 'StringLiteral': return t.stringLiteral(STRING_POOL[config.variant])
-      case 'BooleanLiteral': return t.booleanLiteral(config.variant === 1)
-      case 'NullLiteral': return t.nullLiteral()
-      default: return t.numericLiteral(0)
+    // If user provided a factory, use it 50% of the time
+    if (opts.padFactory && rng() % 2 === 0) {
+      const val = opts.padFactory(rng())
+      return typeof val === 'number' ? t.numericLiteral(val) : t.stringLiteral(val)
     }
+    // Randomly pick from: identifiers, strings, numbers, boolean, null
+    const total = padIdents.length + padStrings.length + padNumbers.length + 3
+    const r = rng() % total
+    if (r < padNumbers.length) return t.numericLiteral(padNumbers[r])
+    if (r < padNumbers.length + padIdents.length) return t.identifier(padIdents[r - padNumbers.length])
+    if (r < padNumbers.length + padIdents.length + padStrings.length) return t.stringLiteral(padStrings[r - padNumbers.length - padIdents.length])
+    const remainder = r - padNumbers.length - padIdents.length - padStrings.length
+    if (remainder === 0) return t.booleanLiteral(true)
+    if (remainder === 1) return t.booleanLiteral(false)
+    return t.nullLiteral()
   }
 
   /** Make a leaf expression from a byte without recursion. */

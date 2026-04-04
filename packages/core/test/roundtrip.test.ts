@@ -107,6 +107,76 @@ describe('fuzz', () => {
     const b = encode(msg)
     expect(a).toBe(b)
   })
+
+  it('different seeds round-trip the same input', () => {
+    const msg = new TextEncoder().encode('the quick brown fox jumps over the lazy dog')
+    for (let seed = 0; seed < 50; seed++) {
+      const js = encode(msg, { seed })
+      const out = decode(js)
+      expect(Array.from(out)).toEqual(Array.from(msg))
+    }
+  })
+
+  it('different seeds produce different output for the same input', () => {
+    const msg = new TextEncoder().encode('hello world')
+    const outputs = new Set<string>()
+    for (let seed = 0; seed < 20; seed++) {
+      outputs.add(encode(msg, { seed }))
+    }
+    expect(outputs.size).toBe(20)
+  })
+
+  it('custom pools round-trip correctly', () => {
+    const msg = new TextEncoder().encode('custom pool test')
+    const js = encode(msg, {
+      identifiers: ['myVar', 'customFunc', 'specialName'],
+      strings: ['custom_str', 'pool_val'],
+      numbers: [9999, 7777, 5555],
+    })
+    const out = decode(js)
+    expect(Array.from(out)).toEqual(Array.from(msg))
+  })
+
+  it('padFactory round-trips correctly', () => {
+    const msg = new TextEncoder().encode('factory test')
+    const js = encode(msg, {
+      padFactory: (rand) => rand % 2 === 0 ? `gen_${rand}` : rand * 3,
+    })
+    const out = decode(js)
+    expect(Array.from(out)).toEqual(Array.from(msg))
+  })
+
+  it('padFactory output appears in encoded JS', () => {
+    const msg = new TextEncoder().encode('hi')
+    const js = encode(msg, {
+      seed: 42,
+      padFactory: () => 'CUSTOM_PAD_VALUE',
+    })
+    expect(js.includes('CUSTOM_PAD_VALUE')).toBe(true)
+  })
+
+  it('options object backward-compatible with number seed', () => {
+    const msg = new TextEncoder().encode('compat test')
+    const a = encode(msg, 123)
+    const b = encode(msg, { seed: 123 })
+    expect(a).toBe(b)
+  })
+
+  it('seed + custom pools + fuzz', () => {
+    for (let seed = 0; seed < 20; seed++) {
+      const len = 20 + seed * 5
+      const data = new Uint8Array(len)
+      crypto.getRandomValues(data)
+      const js = encode(data, {
+        seed,
+        identifiers: ['alpha', 'beta', 'gamma'],
+        strings: ['test_str'],
+        numbers: [42424, 13131],
+      })
+      const out = decode(js)
+      expect(Array.from(out)).toEqual(Array.from(data))
+    }
+  })
 })
 
 describe('encode output validity', () => {

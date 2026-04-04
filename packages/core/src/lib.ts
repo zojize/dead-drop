@@ -1,2 +1,2 @@
-export { encode } from './encode'
+export { encode, type EncodeOptions } from './encode'
 export { decode } from './decode'
