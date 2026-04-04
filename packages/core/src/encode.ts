@@ -50,18 +50,21 @@ export interface EncodeOptions {
 // ─── Scope tracking ─────────────────────────────────────────────────────────
 
 class ScopeStack {
-  private scopes: Set<string>[] = [new Set()]
+  // All var/let/const declarations tracked globally (our code is always
+  // top-level — no functions — so var hoisting means block scoping alone
+  // is insufficient). A flat set avoids var-after-let conflicts.
+  private allDecls = new Set<string>()
   private labelScopes: Set<string>[] = [new Set()]
 
-  push() { this.scopes.push(new Set()); this.labelScopes.push(new Set()) }
-  pop() { this.scopes.pop(); this.labelScopes.pop() }
+  push() { this.labelScopes.push(new Set()) }
+  pop() { this.labelScopes.pop() }
 
   hasDeclInScope(name: string): boolean {
-    return this.scopes[this.scopes.length - 1].has(name)
+    return this.allDecls.has(name)
   }
 
   declare(name: string) {
-    this.scopes[this.scopes.length - 1].add(name)
+    this.allDecls.add(name)
   }
 
   hasLabel(name: string): boolean {
@@ -125,8 +128,8 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
    * Generate a unique var name. For let/const, appends $N suffix on conflict.
    * Decoder strips suffixes to recover the base name → same variant → same byte.
    */
-  function uniqueVarName(baseName: string, kind: string): string {
-    if (kind === 'var') return baseName // var allows redeclaration
+  function uniqueVarName(baseName: string, _kind: string): string {
+    // All declaration kinds tracked — `var x` after `let x` is also a redecl error
     if (!scope.hasDeclInScope(baseName)) {
       scope.declare(baseName)
       return baseName
@@ -138,7 +141,7 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         return suffixed
       }
     }
-    return baseName // fallback (errorRecovery handles it)
+    return baseName
   }
 
   /** Generate a unique label name. Appends $N suffix on conflict. */
@@ -289,9 +292,10 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         break
       }
       case 'WhileStatement': {
-        const test = slot<t.Expression>(), body = slot<t.Statement>()
-        pushAssemble(() => { s.value = t.whileStatement(test.value, body.value) })
-        pushStmt(body); pushExpr(test)
+        const test = slot<t.Expression>(), body = slot<t.Statement[]>()
+        pushAssemble(() => { s.value = t.whileStatement(test.value, t.blockStatement(body.value)) })
+        work.push({ kind: 'scope-pop' }); pushBlock(body); work.push({ kind: 'scope-push' })
+        pushExpr(test)
         break
       }
       case 'ForStatement': {
@@ -299,18 +303,19 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         const init = hasInit ? slot<t.Expression>() : null
         const test = hasTest ? slot<t.Expression>() : null
         const update = hasUpdate ? slot<t.Expression>() : null
-        const body = slot<t.Statement>()
-        pushAssemble(() => { s.value = t.forStatement(init?.value ?? null, test?.value ?? null, update?.value ?? null, body.value) })
-        pushStmt(body)
+        const body = slot<t.Statement[]>()
+        pushAssemble(() => { s.value = t.forStatement(init?.value ?? null, test?.value ?? null, update?.value ?? null, t.blockStatement(body.value)) })
+        work.push({ kind: 'scope-pop' }); pushBlock(body); work.push({ kind: 'scope-push' })
         if (update) pushExpr(update)
         if (test) pushExpr(test)
         if (init) pushExpr(init)
         break
       }
       case 'DoWhileStatement': {
-        const test = slot<t.Expression>(), body = slot<t.Statement>()
-        pushAssemble(() => { s.value = t.doWhileStatement(test.value, body.value) })
-        pushStmt(body); pushExpr(test)
+        const test = slot<t.Expression>(), body = slot<t.Statement[]>()
+        pushAssemble(() => { s.value = t.doWhileStatement(test.value, t.blockStatement(body.value)) })
+        work.push({ kind: 'scope-pop' }); pushBlock(body); work.push({ kind: 'scope-push' })
+        pushExpr(test)
         break
       }
       case 'ReturnStatement': {
@@ -361,9 +366,9 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
       }
       case 'LabeledStatement': {
         const name = uniqueLabel(pools.labels[config.variant])
-        const body = slot<t.Statement>()
-        pushAssemble(() => { s.value = t.labeledStatement(t.identifier(name), body.value) })
-        pushStmt(body)
+        const body = slot<t.Statement[]>()
+        pushAssemble(() => { s.value = t.labeledStatement(t.identifier(name), t.blockStatement(body.value)) })
+        work.push({ kind: 'scope-pop' }); pushBlock(body); work.push({ kind: 'scope-push' })
         break
       }
       case 'VariableDeclaration': {

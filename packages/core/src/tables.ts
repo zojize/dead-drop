@@ -121,13 +121,13 @@ export const STMT_TABLE: NodeConfig[] = new Array(256)
 STMT_TABLE[0x00] = { nodeType: 'ExpressionStatement', variant: 0, children: [{ kind: 'expr' }] }
 STMT_TABLE[0x01] = { nodeType: 'IfStatement', variant: 0, children: [{ kind: 'expr' }, { kind: 'block' }, { kind: 'block' }] }
 STMT_TABLE[0x02] = { nodeType: 'IfStatement', variant: 1, children: [{ kind: 'expr' }, { kind: 'block' }] }
-STMT_TABLE[0x03] = { nodeType: 'WhileStatement', variant: 0, children: [{ kind: 'expr' }, { kind: 'stmt' }] }
+STMT_TABLE[0x03] = { nodeType: 'WhileStatement', variant: 0, children: [{ kind: 'expr' }, { kind: 'block' }] }
 
 for (let b = 0x04; b <= 0x0B; b++) {
   STMT_TABLE[b] = { nodeType: 'ForStatement', variant: b - 0x04, children: [] }
 }
 
-STMT_TABLE[0x0C] = { nodeType: 'DoWhileStatement', variant: 0, children: [{ kind: 'expr' }, { kind: 'stmt' }] }
+STMT_TABLE[0x0C] = { nodeType: 'DoWhileStatement', variant: 0, children: [{ kind: 'expr' }, { kind: 'block' }] }
 STMT_TABLE[0x0D] = { nodeType: 'ReturnStatement', variant: 0, children: [{ kind: 'expr' }] }
 STMT_TABLE[0x0E] = { nodeType: 'ThrowStatement', variant: 0, children: [{ kind: 'expr' }] }
 STMT_TABLE[0x0F] = { nodeType: 'BlockStatement', variant: 0, children: [{ kind: 'block' }] }
@@ -143,7 +143,7 @@ for (let b = 0x18; b <= 0x27; b++) {
 }
 
 for (let b = 0x28; b <= 0x3F; b++) {
-  STMT_TABLE[b] = { nodeType: 'LabeledStatement', variant: b - 0x28, children: [{ kind: 'stmt' }] }
+  STMT_TABLE[b] = { nodeType: 'LabeledStatement', variant: b - 0x28, children: [{ kind: 'block' }] }
 }
 
 for (let b = 0x40; b <= 0x5F; b++) {
@@ -151,7 +151,7 @@ for (let b = 0x40; b <= 0x5F; b++) {
 }
 
 for (let b = 0x60; b <= 0x7F; b++) {
-  STMT_TABLE[b] = { nodeType: 'LabeledStatement', variant: (b - 0x60) + 24, children: [{ kind: 'stmt' }] }
+  STMT_TABLE[b] = { nodeType: 'LabeledStatement', variant: (b - 0x60) + 24, children: [{ kind: 'block' }] }
 }
 
 for (let b = 0x80; b <= 0xFF; b++) {

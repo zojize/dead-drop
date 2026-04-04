@@ -160,14 +160,15 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
       case 'WhileStatement': {
         const n = node as t.WhileStatement
         bytes.push(REVERSE_STMT_TABLE.get(stmtNodeKey('WhileStatement', 0))!)
-        pushStmt(n.body); pushExpr(n.test)
+        pushBlockBody((n.body as t.BlockStatement).body)
+        pushExpr(n.test)
         break
       }
       case 'ForStatement': {
         const n = node as t.ForStatement
         const variant = (n.init !== null ? 1 : 0) | (n.test !== null ? 2 : 0) | (n.update !== null ? 4 : 0)
         bytes.push(REVERSE_STMT_TABLE.get(stmtNodeKey('ForStatement', variant))!)
-        pushStmt(n.body)
+        pushBlockBody((n.body as t.BlockStatement).body)
         if (n.update !== null) pushExpr(n.update as t.Expression)
         if (n.test !== null) pushExpr(n.test as t.Expression)
         if (n.init !== null) pushExpr(n.init as t.Expression)
@@ -176,7 +177,8 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
       case 'DoWhileStatement': {
         const n = node as t.DoWhileStatement
         bytes.push(REVERSE_STMT_TABLE.get(stmtNodeKey('DoWhileStatement', 0))!)
-        pushStmt(n.body); pushExpr(n.test)
+        pushBlockBody((n.body as t.BlockStatement).body)
+        pushExpr(n.test)
         break
       }
       case 'ReturnStatement':
@@ -224,12 +226,12 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
       }
       case 'LabeledStatement': {
         const n = node as t.LabeledStatement
-        // Strip suffix to recover base label name → variant → byte
         const baseName = stripSuffix(n.label.name)
         const labelIdx = labelRev.get(baseName)
         if (labelIdx === undefined) { bytes.push(0) }
         else { bytes.push(REVERSE_STMT_TABLE.get(stmtNodeKey('LabeledStatement', labelIdx))!) }
-        pushStmt(n.body)
+        // Body is always a BlockStatement
+        pushBlockBody((n.body as t.BlockStatement).body)
         break
       }
       case 'VariableDeclaration': {
