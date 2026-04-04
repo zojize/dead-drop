@@ -6,45 +6,17 @@
  * Every config is RECOVERABLE from the parsed AST.
  */
 
-// ─── Pools (scraped from real codebases via scripts/scrape-names.ts) ──────────
+// ─── Pools (minifier-style generated names) ─────────────────────────────────
 
-import scrapedNames from './scraped-names.json'
+import { genIdents, genPrefixed, genStrings, genNumbers } from './namegen'
 
-/** 76 numeric values scraped from minified React/Vue/Lodash/Three.js */
-const NUMERIC_POOL: readonly number[] = scrapedNames.numbers.slice(0, 76)
-
-/** 64 identifier names scraped from minified codebases */
-const IDENT_POOL: readonly string[] = scrapedNames.identifiers
-  .filter((n: string) => !n.startsWith('__'))
-  .slice(0, 64)
-
-/** 32 string literals scraped from minified codebases */
-const STRING_POOL: readonly string[] = scrapedNames.strings.slice(0, 32)
-
-/** 54 short var names for VariableDeclaration */
-const VAR_DECL_NAME_POOL = [
-  'tmp', 'val', 'ref', 'key', 'obj', 'arr', 'fn', 'cb',
-  'acc', 'cur', 'prev', 'next', 'head', 'tail', 'root', 'leaf',
-  'min', 'max', 'sum', 'avg', 'len', 'pos', 'idx', 'ptr',
-  'src', 'dst', 'lhs', 'rhs', 'op', 'res', 'ret', 'err',
-  'buf', 'str', 'num', 'bool', 'char', 'word', 'line', 'col',
-  'row', 'tag', 'cls', 'sel', 'elm', 'doc', 'win', 'req',
-  'env', 'ctx', 'cfg', 'opt', 'arg', 'msg',
-] as const
-
-/** 56 label names for LabeledStatement */
-const LABEL_POOL = [
-  'top', 'outer', 'inner', 'loop', 'next', 'retry', 'step', 'phase',
-  'begin', 'end', 'init', 'main', 'run', 'exec', 'start', 'stop',
-  'skip', 'done', 'exit', 'bail', 'check', 'test', 'scan', 'read',
-  'write', 'send', 'recv', 'wait', 'poll', 'tick', 'mark', 'pass',
-  'fail', 'warn', 'log', 'emit', 'fire', 'call', 'trap', 'hook',
-  'push', 'pull', 'load', 'save', 'open', 'shut', 'lock', 'free',
-  'get', 'set', 'put', 'del', 'add', 'sub', 'mul', 'div',
-] as const
-
-/** 6 catch clause param names */
-const CATCH_PARAM_POOL = ['err', 'error', 'ex', 'e', 'caught', 'fault'] as const
+const IDENT_POOL: readonly string[] = genIdents(64)           // a, b, ..., Z, aa, ab, ...
+const STRING_POOL: readonly string[] = genStrings(32)         // "a", "b", ..., "5"
+const NUMERIC_POOL: readonly number[] = genNumbers(76)        // 0, 1, ..., 75
+const VAR_DECL_NAME_POOL: readonly string[] = genPrefixed('_', 54)  // _a, _b, ..., _Z, _aa, _ab
+const LABEL_POOL: readonly string[] = genPrefixed('L', 56)    // La, Lb, ..., LZ, Laa, ..., Lad
+const CATCH_PARAM_POOL: readonly string[] = genPrefixed('_e', 6) // _ea, _eb, ..., _ef
+const MEMBER_PROP_POOL = ['p', 'q', 'r', 's', 't', 'u', 'v', 'w'] as const
 
 // ─── Operator Pools ───────────────────────────────────────────────────────────
 
@@ -64,8 +36,7 @@ export const ASSIGN_OP_POOL = [
 
 export const VAR_KIND_POOL = ['var', 'let', 'const'] as const
 
-/** 8 property names for non-computed MemberExpression */
-const MEMBER_PROP_POOL = ['log', 'map', 'push', 'keys', 'call', 'bind', 'sort', 'from'] as const
+// (MEMBER_PROP_POOL defined above with other pools)
 
 /** Fixed LHS for AssignmentExpression (must NOT be in IDENT_POOL) */
 export const ASSIGN_LHS_NAME = '_lval'

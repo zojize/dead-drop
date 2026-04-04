@@ -63,8 +63,17 @@ class ScopeStack {
     return this.allDecls.has(name)
   }
 
+  /** List of all declared names (for use as identifier candidates in padding). */
+  private declList: string[] = []
+
   declare(name: string) {
     this.allDecls.add(name)
+    this.declList.push(name)
+  }
+
+  /** Pick a random previously-declared name, or null if none. */
+  pickDeclared(rand: number): string | null {
+    return this.declList.length > 0 ? this.declList[rand % this.declList.length] : null
   }
 
   hasLabel(name: string): boolean {
@@ -162,6 +171,11 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
 
   function padLeafExpr(): t.Expression {
     const r = rng()
+    // 1-in-3 chance to reference a previously-declared variable (looks realistic)
+    if (r % 3 === 0) {
+      const decl = scope.pickDeclared(rng())
+      if (decl) return t.identifier(decl)
+    }
     switch (r % 5) {
       case 0: return t.numericLiteral(pickNumber(rng()))
       case 1: return t.identifier(pickIdent(rng()))

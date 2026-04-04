@@ -229,12 +229,13 @@ Byte        Type                 Count   Children
   pools for padding — either static arrays or factory functions
   `(rand: number) => T`.
 
-- **IfStatement uses explicit blocks.** Wraps if-else branches in `{...}` to
-  avoid dangling-else ambiguity during the codegen-then-parse round-trip.
+- **All statement bodies use blocks.** IfStatement, WhileStatement,
+  ForStatement, DoWhileStatement, and LabeledStatement wrap bodies in `{...}`
+  to prevent lexical-declaration-in-single-statement-context errors.
 
-- **Scraped identifier pools.** Names extracted from real minified React, Vue,
-  Lodash, and Three.js bundles. Lengths range from 1 to 20 characters for
-  realistic distribution. Regenerate with `bun scripts/scrape-names.ts`.
+- **Minifier-style default pools.** Short generated names (`a`, `b`, `aa`,
+  `_a`, `_b`, `La`, `Lb`, etc.) that look like real minified code. Padding
+  expressions reference previously-declared variables for realism.
 
 - **No encryption.** This is steganography only. For actual security,
   encrypt the message (e.g. AES-256-CTR) before encoding.
