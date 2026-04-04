@@ -5,22 +5,18 @@ import {
   REVERSE_STMT_TABLE,
   exprNodeKey,
   stmtNodeKey,
-  NUMERIC_POOL,
-  IDENT_POOL,
-  STRING_POOL,
   BINARY_OP_POOL,
   UNARY_OP_POOL,
   ASSIGN_OP_POOL,
   VAR_KIND_POOL,
-  VAR_DECL_NAME_POOL,
-  CATCH_PARAM_POOL,
-  LABEL_POOL,
-  MEMBER_PROP_POOL,
+  DEFAULT_POOLS,
 } from './tables'
+import { type Pools, stripSuffix } from './pools'
 
-const NUMERIC_REV = new Map<number, number>(NUMERIC_POOL.map((v, i) => [v, i]))
-const IDENT_REV = new Map<string, number>(IDENT_POOL.map((v, i) => [v, i]))
-const STRING_REV = new Map<string, number>(STRING_POOL.map((v, i) => [v, i]))
+export interface DecodeOptions {
+  /** Custom pools matching the encoder's pools. Must match for correct decoding. */
+  pools?: Partial<Pools>
+}
 
 type WorkItem =
   | { kind: 'expr'; node: t.Node }
@@ -31,7 +27,18 @@ type WorkItem =
  * Decode JavaScript source code back into the original byte array.
  * Uses an iterative work stack to avoid call-stack overflow on deep ASTs.
  */
-export function decode(jsSource: string): Uint8Array {
+export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
+  const pools: Pools = { ...DEFAULT_POOLS, ...options?.pools }
+
+  // Build fast reverse maps from the pools
+  const numericRev = new Map<number, number>(pools.numbers.map((v, i) => [v, i]))
+  const identRev = new Map<string, number>(pools.identifiers.map((v, i) => [v, i]))
+  const stringRev = new Map<string, number>(pools.strings.map((v, i) => [v, i]))
+  const varNameRev = new Map<string, number>(pools.varNames.map((v, i) => [v, i]))
+  const labelRev = new Map<string, number>(pools.labels.map((v, i) => [v, i]))
+  const catchParamRev = new Map<string, number>(pools.catchParams.map((v, i) => [v, i]))
+  const memberPropRev = new Map<string, number>(pools.memberProps.map((v, i) => [v, i]))
+
   const ast = parse(jsSource, {
     allowReturnOutsideFunction: true,
     errorRecovery: true,
@@ -44,7 +51,6 @@ export function decode(jsSource: string): Uint8Array {
   function pushStmt(node: t.Node) { work.push({ kind: 'stmt', node }) }
   function pushByte(value: number) { work.push({ kind: 'byte', value }) }
 
-  /** Push a block's statements + a count byte (all in reverse order for LIFO). */
   function pushBlockBody(body: readonly t.Node[]) {
     for (let i = body.length - 1; i >= 0; i--) pushStmt(body[i])
     pushByte(body.length)
@@ -53,13 +59,12 @@ export function decode(jsSource: string): Uint8Array {
   function processExpr(node: t.Node): void {
     switch (node.type) {
       case 'NumericLiteral': {
-        const variant = NUMERIC_REV.get(node.value)
-        // Unknown values come from custom padding pools — push 0 (discarded by length prefix)
+        const variant = numericRev.get(node.value)
         bytes.push(variant !== undefined ? REVERSE_EXPR_TABLE.get(exprNodeKey('NumericLiteral', variant))! : 0)
         break
       }
       case 'Identifier': {
-        const variant = IDENT_REV.get(node.name)
+        const variant = identRev.get(node.name)
         bytes.push(variant !== undefined ? REVERSE_EXPR_TABLE.get(exprNodeKey('Identifier', variant))! : 0)
         break
       }
@@ -92,13 +97,14 @@ export function decode(jsSource: string): Uint8Array {
           bytes.push(REVERSE_EXPR_TABLE.get(exprNodeKey('MemberExpression', 8))!)
           pushExpr(node.property); pushExpr(node.object)
         } else {
-          const propIdx = (MEMBER_PROP_POOL as readonly string[]).indexOf((node.property as t.Identifier).name)
-          bytes.push(REVERSE_EXPR_TABLE.get(exprNodeKey('MemberExpression', propIdx))!)
+          const propName = (node.property as t.Identifier).name
+          const propIdx = memberPropRev.get(propName)
+          bytes.push(propIdx !== undefined ? REVERSE_EXPR_TABLE.get(exprNodeKey('MemberExpression', propIdx))! : 0)
           pushExpr(node.object)
         }
         break
       case 'StringLiteral': {
-        const variant = STRING_REV.get(node.value)
+        const variant = stringRev.get(node.value)
         bytes.push(variant !== undefined ? REVERSE_EXPR_TABLE.get(exprNodeKey('StringLiteral', variant))! : 0)
         break
       }
@@ -196,8 +202,10 @@ export function decode(jsSource: string): Uint8Array {
         break
       case 'TryStatement': {
         const n = node as t.TryStatement
-        const paramIdx = (CATCH_PARAM_POOL as readonly string[]).indexOf((n.handler!.param as t.Identifier).name)
-        bytes.push(REVERSE_STMT_TABLE.get(stmtNodeKey('TryStatement', paramIdx))!)
+        const paramName = (n.handler!.param as t.Identifier).name
+        const paramIdx = catchParamRev.get(stripSuffix(paramName))
+        if (paramIdx === undefined) { bytes.push(0) }
+        else { bytes.push(REVERSE_STMT_TABLE.get(stmtNodeKey('TryStatement', paramIdx))!) }
         pushBlockBody(n.handler!.body.body)
         pushBlockBody(n.block.body)
         break
@@ -216,9 +224,10 @@ export function decode(jsSource: string): Uint8Array {
       }
       case 'LabeledStatement': {
         const n = node as t.LabeledStatement
-        const labelIdx = (LABEL_POOL as readonly string[]).indexOf(n.label.name)
-        // Unknown labels come from scope-conflict fallback — push 0 (discarded by length prefix)
-        if (labelIdx === -1) { bytes.push(0) }
+        // Strip suffix to recover base label name → variant → byte
+        const baseName = stripSuffix(n.label.name)
+        const labelIdx = labelRev.get(baseName)
+        if (labelIdx === undefined) { bytes.push(0) }
         else { bytes.push(REVERSE_STMT_TABLE.get(stmtNodeKey('LabeledStatement', labelIdx))!) }
         pushStmt(n.body)
         break
@@ -226,9 +235,10 @@ export function decode(jsSource: string): Uint8Array {
       case 'VariableDeclaration': {
         const n = node as t.VariableDeclaration
         const kindIndex = (VAR_KIND_POOL as readonly string[]).indexOf(n.kind)
-        const nameIndex = (VAR_DECL_NAME_POOL as readonly string[]).indexOf((n.declarations[0].id as t.Identifier).name)
-        // Unknown names come from scope-conflict fallback — push 0 (discarded by length prefix)
-        if (nameIndex === -1) { bytes.push(0) }
+        // Strip suffix to recover base var name → variant → byte
+        const baseName = stripSuffix((n.declarations[0].id as t.Identifier).name)
+        const nameIndex = varNameRev.get(baseName)
+        if (nameIndex === undefined) { bytes.push(0) }
         else { bytes.push(REVERSE_STMT_TABLE.get(stmtNodeKey('VariableDeclaration', nameIndex * 3 + kindIndex))!) }
         pushExpr(n.declarations[0].init!)
         break
@@ -238,10 +248,8 @@ export function decode(jsSource: string): Uint8Array {
     }
   }
 
-  // Seed with top-level statements in reverse
   for (let i = ast.program.body.length - 1; i >= 0; i--) pushStmt(ast.program.body[i])
 
-  // Drain iteratively
   while (work.length > 0) {
     const item = work.pop()!
     switch (item.kind) {

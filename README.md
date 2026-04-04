@@ -25,13 +25,19 @@ const js = encode(new TextEncoder().encode('attack at dawn'))
 const bytes = decode(js)
 new TextDecoder().decode(bytes) // -> 'attack at dawn'
 
-// With options: custom seed, pool factories, static pools
+// With options: custom seed, pool factories, shared pools
 const js2 = encode(new TextEncoder().encode('hello'), {
   seed: 42,
   identifiers: (rand) => `myVar_${rand % 100}`,  // or ['foo', 'bar']
   strings: ['custom_str', 'another'],
   numbers: [1337, 9001],
 })
+
+// Custom pools (must match between encode and decode)
+import { DEFAULT_POOLS } from '@zojize/dead-drop'
+const pools = { ...DEFAULT_POOLS, varNames: ['x', 'y', 'z', ...DEFAULT_POOLS.varNames.slice(3)] }
+const js3 = encode(msg, { pools })
+const out = decode(js3, { pools })  // same pools → correct decode
 ```
 
 ## CLI
@@ -202,16 +208,26 @@ Byte        Type                 Count   Children
   codegen that handles our AST subset with correct parenthesization for
   operator precedence, numeric member access, and object/block ambiguity.
 
+- **Data lives in AST structure, not literal values.** The byte→node mapping
+  uses node types, operators, child counts, and pool indices as variants.
+  Literal values (identifier names, strings, numbers) are looked up from
+  pools — changing the pool changes the output appearance but not the data.
+
 - **Scope-aware declarations.** The encoder tracks `let`/`const` declarations
-  per block scope and generates unique fallback names to avoid redeclaration
-  errors. `var` declarations are unrestricted (JS allows redeclaration).
+  per block scope and labels per scope chain. On conflict, appends a `$N`
+  suffix that the decoder strips to recover the base pool name.
+
+- **Shared pools.** Both `encode()` and `decode()` accept a `pools` option.
+  Encoder and decoder must use matching pools for correct round-trips. Custom
+  pools let you control the output vocabulary. Default pools are scraped from
+  real minified codebases.
 
 - **`errorRecovery` parsing.** Babel's `errorRecovery` mode tolerates
-  duplicate labels and edge cases in the generated code.
+  edge cases in the generated code.
 
-- **Customizable pools.** `encode()` accepts an options object with custom
-  identifier/string/number pools — either static arrays or factory functions
-  `(rand: number) => T`. Custom values are used in padding expressions.
+- **Customizable padding.** `encode()` accepts custom identifier/string/number
+  pools for padding — either static arrays or factory functions
+  `(rand: number) => T`.
 
 - **IfStatement uses explicit blocks.** Wraps if-else branches in `{...}` to
   avoid dangling-else ambiguity during the codegen-then-parse round-trip.

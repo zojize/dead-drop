@@ -11,18 +11,18 @@
 import scrapedNames from './scraped-names.json'
 
 /** 76 numeric values scraped from minified React/Vue/Lodash/Three.js */
-export const NUMERIC_POOL: readonly number[] = scrapedNames.numbers.slice(0, 76)
+const NUMERIC_POOL: readonly number[] = scrapedNames.numbers.slice(0, 76)
 
 /** 64 identifier names scraped from minified codebases */
-export const IDENT_POOL: readonly string[] = scrapedNames.identifiers
+const IDENT_POOL: readonly string[] = scrapedNames.identifiers
   .filter((n: string) => !n.startsWith('__'))
   .slice(0, 64)
 
 /** 32 string literals scraped from minified codebases */
-export const STRING_POOL: readonly string[] = scrapedNames.strings.slice(0, 32)
+const STRING_POOL: readonly string[] = scrapedNames.strings.slice(0, 32)
 
 /** 54 short var names for VariableDeclaration */
-export const VAR_DECL_NAME_POOL = [
+const VAR_DECL_NAME_POOL = [
   'tmp', 'val', 'ref', 'key', 'obj', 'arr', 'fn', 'cb',
   'acc', 'cur', 'prev', 'next', 'head', 'tail', 'root', 'leaf',
   'min', 'max', 'sum', 'avg', 'len', 'pos', 'idx', 'ptr',
@@ -33,7 +33,7 @@ export const VAR_DECL_NAME_POOL = [
 ] as const
 
 /** 56 label names for LabeledStatement */
-export const LABEL_POOL = [
+const LABEL_POOL = [
   'top', 'outer', 'inner', 'loop', 'next', 'retry', 'step', 'phase',
   'begin', 'end', 'init', 'main', 'run', 'exec', 'start', 'stop',
   'skip', 'done', 'exit', 'bail', 'check', 'test', 'scan', 'read',
@@ -44,7 +44,7 @@ export const LABEL_POOL = [
 ] as const
 
 /** 6 catch clause param names */
-export const CATCH_PARAM_POOL = ['err', 'error', 'ex', 'e', 'caught', 'fault'] as const
+const CATCH_PARAM_POOL = ['err', 'error', 'ex', 'e', 'caught', 'fault'] as const
 
 // ─── Operator Pools ───────────────────────────────────────────────────────────
 
@@ -65,10 +65,22 @@ export const ASSIGN_OP_POOL = [
 export const VAR_KIND_POOL = ['var', 'let', 'const'] as const
 
 /** 8 property names for non-computed MemberExpression */
-export const MEMBER_PROP_POOL = ['log', 'map', 'push', 'keys', 'call', 'bind', 'sort', 'from'] as const
+const MEMBER_PROP_POOL = ['log', 'map', 'push', 'keys', 'call', 'bind', 'sort', 'from'] as const
 
 /** Fixed LHS for AssignmentExpression (must NOT be in IDENT_POOL) */
 export const ASSIGN_LHS_NAME = '_lval'
+
+import type { Pools } from './pools'
+
+export const DEFAULT_POOLS: Pools = {
+  identifiers: IDENT_POOL,
+  strings: STRING_POOL,
+  numbers: NUMERIC_POOL,
+  varNames: VAR_DECL_NAME_POOL,
+  labels: LABEL_POOL,
+  catchParams: CATCH_PARAM_POOL,
+  memberProps: MEMBER_PROP_POOL,
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

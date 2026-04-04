@@ -3,19 +3,14 @@ import { generateCompact } from './codegen'
 import {
   EXPR_TABLE,
   STMT_TABLE,
-  NUMERIC_POOL,
-  IDENT_POOL,
-  STRING_POOL,
   BINARY_OP_POOL,
   UNARY_OP_POOL,
   ASSIGN_OP_POOL,
   VAR_KIND_POOL,
-  VAR_DECL_NAME_POOL,
-  CATCH_PARAM_POOL,
-  LABEL_POOL,
-  MEMBER_PROP_POOL,
   ASSIGN_LHS_NAME,
+  DEFAULT_POOLS,
 } from './tables'
+import { type Pools, SCOPE_SUFFIX_SEP } from './pools'
 
 // Leaf expression byte values (no children, guaranteed termination)
 const LEAF_EXPR_BYTES = [
@@ -25,7 +20,6 @@ const LEAF_EXPR_BYTES = [
   0xFD, 0xFE, 0xFF,                                     // Boolean, Null
 ]
 
-/** Seeded PRNG (mulberry32) for deterministic varied padding. */
 function createPadRng(seed: number) {
   let s = seed | 0
   return () => {
@@ -43,14 +37,43 @@ type PoolOrFactory<T> = T[] | ((rand: number) => T)
 export interface EncodeOptions {
   /** Seed for the PRNG that generates padding expressions. Defaults to message length. */
   seed?: number
-  /** Custom identifier names for padding. Array or factory. Merged with built-in pool. */
+  /** Custom pools matching the Pools interface. Both encode and decode must use the same pools. */
+  pools?: Partial<Pools>
+  /** Custom identifier names for padding. Array or factory. Merged with pool. */
   identifiers?: PoolOrFactory<string>
-  /** Custom string literals for padding. Array or factory. Merged with built-in pool. */
+  /** Custom string literals for padding. Array or factory. Merged with pool. */
   strings?: PoolOrFactory<string>
-  /** Custom numeric literals for padding. Array or factory. Merged with built-in pool. */
+  /** Custom numeric literals for padding. Array or factory. Merged with pool. */
   numbers?: PoolOrFactory<number>
-  /** Custom label names for padding. Array or factory. Merged with built-in pool. */
-  labels?: PoolOrFactory<string>
+}
+
+// ─── Scope tracking ─────────────────────────────────────────────────────────
+
+class ScopeStack {
+  private scopes: Set<string>[] = [new Set()]
+  private labelScopes: Set<string>[] = [new Set()]
+
+  push() { this.scopes.push(new Set()); this.labelScopes.push(new Set()) }
+  pop() { this.scopes.pop(); this.labelScopes.pop() }
+
+  hasDeclInScope(name: string): boolean {
+    return this.scopes[this.scopes.length - 1].has(name)
+  }
+
+  declare(name: string) {
+    this.scopes[this.scopes.length - 1].add(name)
+  }
+
+  hasLabel(name: string): boolean {
+    for (let i = this.labelScopes.length - 1; i >= 0; i--) {
+      if (this.labelScopes[i].has(name)) return true
+    }
+    return false
+  }
+
+  declareLabel(name: string) {
+    this.labelScopes[this.labelScopes.length - 1].add(name)
+  }
 }
 
 // ─── Iterative AST builder ──────────────────────────────────────────────────
@@ -61,12 +84,12 @@ type WorkItem =
   | { kind: 'stmt'; slot: Slot<t.Statement> }
   | { kind: 'block'; slot: Slot<t.Statement[]> }
   | { kind: 'assemble'; fn: () => void }
+  | { kind: 'scope-push' }
+  | { kind: 'scope-pop' }
 
-/**
- * Encode a byte array into syntactically valid JavaScript source code.
- */
 export function encode(message: Uint8Array, options?: EncodeOptions): string {
   const opts = options ?? {}
+  const pools: Pools = { ...DEFAULT_POOLS, ...opts.pools }
 
   const length = message.length
   const prefixed = new Uint8Array(4 + length)
@@ -79,8 +102,8 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
   let cursor = 0
   const rng = createPadRng(opts.seed ?? length)
   const isPad = () => cursor >= prefixed.length
+  const scope = new ScopeStack()
 
-  // Resolve pool-or-factory into a pick function
   function pickFrom<T>(builtIn: readonly T[], custom: PoolOrFactory<T> | undefined): (rand: number) => T {
     if (!custom) return (rand) => builtIn[rand % builtIn.length]
     if (typeof custom === 'function') {
@@ -91,12 +114,47 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
     return (rand) => merged[rand % merged.length]
   }
 
-  const pickIdent = pickFrom(IDENT_POOL, opts.identifiers)
-  const pickString = pickFrom(STRING_POOL, opts.strings)
-  const pickNumber = pickFrom(NUMERIC_POOL, opts.numbers)
+  const pickIdent = pickFrom(pools.identifiers, opts.identifiers)
+  const pickString = pickFrom(pools.strings, opts.strings)
+  const pickNumber = pickFrom(pools.numbers, opts.numbers)
 
-  function readByte(): number {
-    return prefixed[cursor++]
+
+  function readByte(): number { return prefixed[cursor++] }
+
+  /**
+   * Generate a unique var name. For let/const, appends $N suffix on conflict.
+   * Decoder strips suffixes to recover the base name → same variant → same byte.
+   */
+  function uniqueVarName(baseName: string, kind: string): string {
+    if (kind === 'var') return baseName // var allows redeclaration
+    if (!scope.hasDeclInScope(baseName)) {
+      scope.declare(baseName)
+      return baseName
+    }
+    for (let i = 1; i <= 100; i++) {
+      const suffixed = `${baseName}${SCOPE_SUFFIX_SEP}${i}`
+      if (!scope.hasDeclInScope(suffixed)) {
+        scope.declare(suffixed)
+        return suffixed
+      }
+    }
+    return baseName // fallback (errorRecovery handles it)
+  }
+
+  /** Generate a unique label name. Appends $N suffix on conflict. */
+  function uniqueLabel(baseName: string): string {
+    if (!scope.hasLabel(baseName)) {
+      scope.declareLabel(baseName)
+      return baseName
+    }
+    for (let i = 1; i <= 100; i++) {
+      const suffixed = `${baseName}${SCOPE_SUFFIX_SEP}${i}`
+      if (!scope.hasLabel(suffixed)) {
+        scope.declareLabel(suffixed)
+        return suffixed
+      }
+    }
+    return baseName
   }
 
   function padLeafExpr(): t.Expression {
@@ -113,9 +171,9 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
   function makeLeafExpr(byte: number): t.Expression | null {
     const config = EXPR_TABLE[byte]
     switch (config.nodeType) {
-      case 'NumericLiteral': return t.numericLiteral(NUMERIC_POOL[config.variant])
-      case 'Identifier': return t.identifier(IDENT_POOL[config.variant])
-      case 'StringLiteral': return t.stringLiteral(STRING_POOL[config.variant])
+      case 'NumericLiteral': return t.numericLiteral(pools.numbers[config.variant])
+      case 'Identifier': return t.identifier(pools.identifiers[config.variant])
+      case 'StringLiteral': return t.stringLiteral(pools.strings[config.variant])
       case 'BooleanLiteral': return t.booleanLiteral(config.variant === 1)
       case 'NullLiteral': return t.nullLiteral()
       default: return null
@@ -124,10 +182,7 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
 
   const work: WorkItem[] = []
 
-  function slot<T>(initial?: T): Slot<T> {
-    return { value: initial! }
-  }
-
+  function slot<T>(initial?: T): Slot<T> { return { value: initial! } }
   function pushExpr(s: Slot<t.Expression>) { work.push({ kind: 'expr', slot: s }) }
   function pushStmt(s: Slot<t.Statement>) { work.push({ kind: 'stmt', slot: s }) }
   function pushBlock(s: Slot<t.Statement[]>) { work.push({ kind: 'block', slot: s }) }
@@ -174,7 +229,7 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
           pushExpr(prop); pushExpr(obj)
         } else {
           const obj = slot<t.Expression>()
-          pushAssemble(() => { s.value = t.memberExpression(obj.value, t.identifier(MEMBER_PROP_POOL[config.variant]), false) })
+          pushAssemble(() => { s.value = t.memberExpression(obj.value, t.identifier(pools.memberProps[config.variant]), false) })
           pushExpr(obj)
         }
         break
@@ -223,10 +278,13 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         if (config.variant === 0) {
           const alt = slot<t.Statement[]>()
           pushAssemble(() => { s.value = t.ifStatement(test.value, t.blockStatement(cons.value), t.blockStatement(alt.value)) })
-          pushBlock(alt); pushBlock(cons); pushExpr(test)
+          work.push({ kind: 'scope-pop' }); pushBlock(alt); work.push({ kind: 'scope-push' })
+          work.push({ kind: 'scope-pop' }); pushBlock(cons); work.push({ kind: 'scope-push' })
+          pushExpr(test)
         } else {
           pushAssemble(() => { s.value = t.ifStatement(test.value, t.blockStatement(cons.value)) })
-          pushBlock(cons); pushExpr(test)
+          work.push({ kind: 'scope-pop' }); pushBlock(cons); work.push({ kind: 'scope-push' })
+          pushExpr(test)
         }
         break
       }
@@ -270,7 +328,7 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
       case 'BlockStatement': {
         const blk = slot<t.Statement[]>()
         pushAssemble(() => { s.value = t.blockStatement(blk.value) })
-        pushBlock(blk)
+        work.push({ kind: 'scope-pop' }); pushBlock(blk); work.push({ kind: 'scope-push' })
         break
       }
       case 'EmptyStatement':
@@ -284,10 +342,11 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         pushAssemble(() => {
           s.value = t.tryStatement(
             t.blockStatement(tryBlk.value),
-            t.catchClause(t.identifier(CATCH_PARAM_POOL[config.variant]), t.blockStatement(catchBlk.value)),
+            t.catchClause(t.identifier(pools.catchParams[config.variant]), t.blockStatement(catchBlk.value)),
           )
         })
-        pushBlock(catchBlk); pushBlock(tryBlk)
+        work.push({ kind: 'scope-pop' }); pushBlock(catchBlk); work.push({ kind: 'scope-push' })
+        work.push({ kind: 'scope-pop' }); pushBlock(tryBlk); work.push({ kind: 'scope-push' })
         break
       }
       case 'SwitchStatement': {
@@ -301,17 +360,20 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         break
       }
       case 'LabeledStatement': {
+        const name = uniqueLabel(pools.labels[config.variant])
         const body = slot<t.Statement>()
-        pushAssemble(() => { s.value = t.labeledStatement(t.identifier(LABEL_POOL[config.variant]), body.value) })
+        pushAssemble(() => { s.value = t.labeledStatement(t.identifier(name), body.value) })
         pushStmt(body)
         break
       }
       case 'VariableDeclaration': {
         const kindIndex = config.variant % 3, nameIndex = Math.floor(config.variant / 3)
+        const kind = VAR_KIND_POOL[kindIndex] as 'var' | 'let' | 'const'
+        const name = uniqueVarName(pools.varNames[nameIndex], kind)
         const init = slot<t.Expression>()
         pushAssemble(() => {
-          s.value = t.variableDeclaration(VAR_KIND_POOL[kindIndex] as 'var' | 'let' | 'const', [
-            t.variableDeclarator(t.identifier(VAR_DECL_NAME_POOL[nameIndex]), init.value),
+          s.value = t.variableDeclaration(kind, [
+            t.variableDeclarator(t.identifier(name), init.value),
           ])
         })
         pushExpr(init)
@@ -338,6 +400,8 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         case 'stmt': scheduleStmt(item.slot); break
         case 'block': scheduleBlock(item.slot); break
         case 'assemble': item.fn(); break
+        case 'scope-push': scope.push(); break
+        case 'scope-pop': scope.pop(); break
       }
     }
   }

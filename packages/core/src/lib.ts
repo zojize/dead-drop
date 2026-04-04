@@ -1,2 +1,4 @@
 export { encode, type EncodeOptions } from './encode'
-export { decode } from './decode'
+export { decode, type DecodeOptions } from './decode'
+export { type Pools } from './pools'
+export { DEFAULT_POOLS } from './tables'
