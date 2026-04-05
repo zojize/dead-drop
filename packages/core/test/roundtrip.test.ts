@@ -3,6 +3,7 @@ import { parse } from '@babel/parser'
 import { TextEncoder } from 'node:util'
 import { encode } from '../src/encode'
 import { decode } from '../src/decode'
+import { generateCompact } from '../src/codegen'
 
 function testRoundTrip(input: Uint8Array) {
   const js = encode(input)
@@ -195,32 +196,75 @@ describe('data lives in AST structure, not literal values', () => {
     }
   })
 
-  it('scope tracking: repeated let/const declarations', () => {
-    // Byte 0x42 = VariableDeclaration. Repeating tests scope suffix handling.
-    const data = new Uint8Array(20).fill(0x42)
-    testRoundTrip(data)
-  })
+  it('randomize all names, literals, and labels — decode still works', () => {
+    // This is the definitive test: encode a message, parse the output,
+    // walk the AST and randomize EVERY cosmetic value (identifier names,
+    // string literal values, numeric literal values, regex patterns,
+    // bigint values, template strings, labels, var names, catch params),
+    // regenerate JS from the mutated AST, and verify decode still works.
 
-  it('scope tracking: repeated labels', () => {
-    // Byte 0x60 = LabeledStatement. Repeating tests label suffix handling.
-    const data = new Uint8Array(15).fill(0x60)
-    testRoundTrip(data)
-  })
-
-  it('scope tracking: repeated let/const with different seeds', () => {
-    for (let seed = 0; seed < 20; seed++) {
-      const data = new Uint8Array(20).fill(0x42)
-      const js = encode(data, { seed })
-      const out = decode(js)
-      expect(Array.from(out)).toEqual(Array.from(data))
+    function randomizeName(): string {
+      // _ prefix guarantees it's never a JS keyword
+      const chars = 'abcdefghijklmnopqrstuvwxyz'
+      const len = 1 + Math.floor(Math.random() * 5)
+      let s = '_'
+      for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * chars.length)]
+      return s
     }
-  })
 
-  it('scope tracking: repeated labels with different seeds', () => {
-    for (let seed = 0; seed < 20; seed++) {
-      const data = new Uint8Array(15).fill(0x60)
-      const js = encode(data, { seed })
-      const out = decode(js)
+    function walk(node: any): void {
+      if (!node || typeof node !== 'object') return
+      // Randomize cosmetic values
+      if (node.type === 'Identifier' && typeof node.name === 'string') {
+        node.name = randomizeName()
+      }
+      if (node.type === 'NumericLiteral' && typeof node.value === 'number') {
+        node.value = Math.floor(Math.random() * 99999)
+        delete node.extra
+      }
+      if (node.type === 'StringLiteral' && typeof node.value === 'string') {
+        node.value = randomizeName()
+        delete node.extra
+      }
+      if (node.type === 'BigIntLiteral' && typeof node.value === 'string') {
+        node.value = String(Math.floor(Math.random() * 99999))
+        delete node.extra
+      }
+      if (node.type === 'RegExpLiteral') {
+        node.pattern = randomizeName()
+        delete node.extra
+      }
+      if (node.type === 'TemplateElement' && node.value) {
+        const raw = randomizeName()
+        node.value = { raw, cooked: raw }
+      }
+      // Recurse
+      for (const key of Object.keys(node)) {
+        if (key === 'type' || key === 'start' || key === 'end' || key === 'loc') continue
+        const val = node[key]
+        if (Array.isArray(val)) val.forEach(walk)
+        else if (val && typeof val === 'object' && val.type) walk(val)
+      }
+    }
+
+    for (let i = 0; i < 200; i++) {
+      const len = Math.floor(Math.random() * 50) + 1
+      const data = new Uint8Array(len)
+      crypto.getRandomValues(data)
+
+      const js = encode(data)
+
+      // Parse → randomize → regenerate
+      const ast = parse(js, {
+        allowReturnOutsideFunction: true,
+        errorRecovery: true,
+        plugins: [['optionalChainingAssign', { version: '2023-07' }]],
+      })
+      walk(ast.program)
+      const randomized = generateCompact(ast.program)
+
+      // Decode the randomized JS — must still produce the same bytes
+      const out = decode(randomized)
       expect(Array.from(out)).toEqual(Array.from(data))
     }
   })

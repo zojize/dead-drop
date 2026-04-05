@@ -9,19 +9,9 @@
  * node types, operators, child counts, boolean flags, and regex flag combos.
  * Literal values (identifier names, string values, numbers) are cosmetic.
  *
- * STATEMENT TABLE: mostly structural. VariableDeclaration, LabeledStatement,
- * and TryStatement use hardcoded DEFAULT_STMT_POOLS (name -> variant), which
- * are built into both encoder and decoder — no pool parameter needed.
+ * NO STATEMENT TABLE: all data is encoded through expressions only.
+ * The program body is a sequence of ExpressionStatements.
  */
-
-// ─── Pools (used internally for statement variants) ─────────────────────────
-
-import { genPrefixed } from './namegen'
-
-const VAR_DECL_NAME_POOL: readonly string[] = genPrefixed('_', 54)  // _a, _b, ..., _Z, _aa, _ab
-const LABEL_POOL: readonly string[] = genPrefixed('L', 56)    // La, Lb, ..., LZ, Laa, ..., Lad
-const CATCH_PARAM_POOL: readonly string[] = genPrefixed('_e', 6) // _ea, _eb, ..., _ef
-const MEMBER_PROP_POOL = ['p', 'q', 'r', 's', 't', 'u', 'v', 'w'] as const
 
 // ─── Operator Pools ───────────────────────────────────────────────────────────
 
@@ -43,8 +33,6 @@ export const ASSIGN_OP_POOL = [
   '^=', '<<=', '>>=', '>>>=', '**=', '??=', '||=', '&&=',
 ] as const
 
-export const VAR_KIND_POOL = ['var', 'let', 'const'] as const
-
 /**
  * The 6 RegExp flags. Each flag is either present or absent,
  * giving 2^6 = 64 structural variants for RegExpLiteral.
@@ -54,91 +42,12 @@ export const REGEXP_FLAGS = ['d', 'g', 'i', 'm', 's', 'u'] as const
 /** Fixed LHS for AssignmentExpression (must NOT collide with cosmetic names) */
 export const ASSIGN_LHS_NAME = '_lval'
 
-// ─── Statement Pools (hardcoded, used by both encoder and decoder) ──────────
-
-import type { StatementPools } from './pools'
-
-export const DEFAULT_STMT_POOLS: StatementPools = {
-  varNames: VAR_DECL_NAME_POOL,
-  labels: LABEL_POOL,
-  catchParams: CATCH_PARAM_POOL,
-  memberProps: MEMBER_PROP_POOL,
-}
-
 // ─── Types ────────────────────────────────────────────────────────────────────
-
-type ChildKind = 'expr' | 'stmt' | 'block'
 
 interface NodeConfig {
   nodeType: string
   variant: number
-  children: Array<{ kind: ChildKind }>
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// STATEMENT TABLE (256 entries) — same layout as before
-//
-// Byte       | Node Type            | Count | Variant
-// -----------|----------------------|-------|--------
-// 0x00       | ExpressionStatement  | 1     | -
-// 0x01       | IfStatement:else     | 1     | 0 (has alternate)
-// 0x02       | IfStatement:no-else  | 1     | 1 (no alternate)
-// 0x03       | WhileStatement       | 1     | -
-// 0x04-0x0B  | ForStatement         | 8     | bits: init|test|update present
-// 0x0C       | DoWhileStatement     | 1     | -
-// 0x0D       | ReturnStatement      | 1     | -
-// 0x0E       | ThrowStatement       | 1     | -
-// 0x0F       | BlockStatement       | 1     | -
-// 0x10       | EmptyStatement       | 1     | -
-// 0x11       | DebuggerStatement    | 1     | -
-// 0x12-0x17  | TryStatement         | 6     | catch param name
-// 0x18-0x27  | SwitchStatement      | 16    | case count 0-15
-// 0x28-0x3F  | LabeledStatement     | 24    | label name 0-23
-// 0x40-0x5F  | VariableDeclaration  | 32    | kind x name (0-31)
-// 0x60-0x7F  | LabeledStatement     | 32    | label name 24-55
-// 0x80-0xFF  | VariableDeclaration  | 128   | kind x name (32-159)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-export const STMT_TABLE: NodeConfig[] = new Array(256)
-
-STMT_TABLE[0x00] = { nodeType: 'ExpressionStatement', variant: 0, children: [{ kind: 'expr' }] }
-STMT_TABLE[0x01] = { nodeType: 'IfStatement', variant: 0, children: [{ kind: 'expr' }, { kind: 'block' }, { kind: 'block' }] }
-STMT_TABLE[0x02] = { nodeType: 'IfStatement', variant: 1, children: [{ kind: 'expr' }, { kind: 'block' }] }
-STMT_TABLE[0x03] = { nodeType: 'WhileStatement', variant: 0, children: [{ kind: 'expr' }, { kind: 'block' }] }
-
-for (let b = 0x04; b <= 0x0B; b++) {
-  STMT_TABLE[b] = { nodeType: 'ForStatement', variant: b - 0x04, children: [] }
-}
-
-STMT_TABLE[0x0C] = { nodeType: 'DoWhileStatement', variant: 0, children: [{ kind: 'expr' }, { kind: 'block' }] }
-STMT_TABLE[0x0D] = { nodeType: 'ReturnStatement', variant: 0, children: [{ kind: 'expr' }] }
-STMT_TABLE[0x0E] = { nodeType: 'ThrowStatement', variant: 0, children: [{ kind: 'expr' }] }
-STMT_TABLE[0x0F] = { nodeType: 'BlockStatement', variant: 0, children: [{ kind: 'block' }] }
-STMT_TABLE[0x10] = { nodeType: 'EmptyStatement', variant: 0, children: [] }
-STMT_TABLE[0x11] = { nodeType: 'DebuggerStatement', variant: 0, children: [] }
-
-for (let b = 0x12; b <= 0x17; b++) {
-  STMT_TABLE[b] = { nodeType: 'TryStatement', variant: b - 0x12, children: [{ kind: 'block' }, { kind: 'block' }] }
-}
-
-for (let b = 0x18; b <= 0x27; b++) {
-  STMT_TABLE[b] = { nodeType: 'SwitchStatement', variant: b - 0x18, children: [] }
-}
-
-for (let b = 0x28; b <= 0x3F; b++) {
-  STMT_TABLE[b] = { nodeType: 'LabeledStatement', variant: b - 0x28, children: [{ kind: 'block' }] }
-}
-
-for (let b = 0x40; b <= 0x5F; b++) {
-  STMT_TABLE[b] = { nodeType: 'VariableDeclaration', variant: b - 0x40, children: [{ kind: 'expr' }] }
-}
-
-for (let b = 0x60; b <= 0x7F; b++) {
-  STMT_TABLE[b] = { nodeType: 'LabeledStatement', variant: (b - 0x60) + 24, children: [{ kind: 'block' }] }
-}
-
-for (let b = 0x80; b <= 0xFF; b++) {
-  STMT_TABLE[b] = { nodeType: 'VariableDeclaration', variant: (b - 0x80) + 32, children: [{ kind: 'expr' }] }
+  children: Array<{ kind: 'expr' }>
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -294,18 +203,8 @@ export function exprNodeKey(nodeType: string, variant: number): string {
   return `${nodeType}:${variant}`
 }
 
-export function stmtNodeKey(nodeType: string, variant: number): string {
-  return `${nodeType}:${variant}`
-}
-
 export const REVERSE_EXPR_TABLE = new Map<string, number>()
 for (let b = 0; b < 256; b++) {
   const cfg = EXPR_TABLE[b]
   REVERSE_EXPR_TABLE.set(exprNodeKey(cfg.nodeType, cfg.variant), b)
-}
-
-export const REVERSE_STMT_TABLE = new Map<string, number>()
-for (let b = 0; b < 256; b++) {
-  const cfg = STMT_TABLE[b]
-  REVERSE_STMT_TABLE.set(stmtNodeKey(cfg.nodeType, cfg.variant), b)
 }
