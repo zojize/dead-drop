@@ -31,9 +31,8 @@ export function Playground() {
   const [decoded, setDecoded] = useState('')
   const [error, setError] = useState('')
   const [copied, setCopied] = useState(false)
-  // Ref is set synchronously in onChange, always correct by render time.
-  // Using state here causes batching issues where the display condition
-  // evaluates before the direction update is committed.
+  const [encodeMs, setEncodeMs] = useState<number | null>(null)
+  const [decodeMs, setDecodeMs] = useState<number | null>(null)
   const dirRef = useRef<'encode' | 'decode'>('encode')
   const initialized = useRef(false)
 
@@ -47,35 +46,37 @@ export function Playground() {
     setEncodedRaw(val)
   }, [])
 
-  // Encode on input or seed change
   useEffect(() => {
     if (dirRef.current !== 'encode') return
     try {
       setError('')
-      if (!input) { setEncodedRaw(''); setDecoded(''); return }
-      setEncodedRaw(encode(new TextEncoder().encode(input), { seed }))
+      if (!input) { setEncodedRaw(''); setDecoded(''); setEncodeMs(null); return }
+      const t0 = performance.now()
+      const js = encode(new TextEncoder().encode(input), { seed })
+      setEncodeMs(performance.now() - t0)
+      setEncodedRaw(js)
     } catch (e: any) { setError(e.message) }
   }, [input, seed])
 
-  // Decode on encoded change (debounced, only in decode mode)
   useEffect(() => {
     if (dirRef.current !== 'decode') return
     setDecoded('')
+    setDecodeMs(null)
     const t = setTimeout(() => {
       try {
         setError('')
         if (!encoded) { setDecoded(''); return }
-        setDecoded(new TextDecoder().decode(decode(encoded)))
+        const t0 = performance.now()
+        const bytes = decode(encoded)
+        setDecodeMs(performance.now() - t0)
+        setDecoded(new TextDecoder().decode(bytes))
       } catch (e: any) { setError(e.message) }
     }, 250)
     return () => clearTimeout(t)
   }, [encoded])
 
-  // In encode mode, derive decoded from input (synchronous, never stale).
-  // In decode mode, use the debounced decoded state.
   const displayDecoded = dirRef.current === 'encode' ? input : decoded
 
-  // Auto-fill placeholder on first mount if no URL state
   useEffect(() => {
     if (!initialized.current) {
       initialized.current = true
@@ -83,7 +84,6 @@ export function Playground() {
     }
   }, [setInput])
 
-  // Persist to URL (debounced)
   useEffect(() => {
     if (dirRef.current !== 'encode') return
     const t = setTimeout(() => { if (input) saveToUrl({ input, seed }) }, 400)
@@ -96,6 +96,13 @@ export function Playground() {
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }, [input, seed])
+
+  const timing = encodeMs !== null || decodeMs !== null
+    ? [
+        encodeMs !== null ? `enc ${encodeMs.toFixed(0)}ms` : '',
+        decodeMs !== null ? `dec ${decodeMs.toFixed(0)}ms` : '',
+      ].filter(Boolean).join(' · ')
+    : ''
 
   return (
     <div className="sp">
@@ -139,7 +146,7 @@ export function Playground() {
         <div className="sp-right">
           <div className="sp-top">
             <div className="sp-tag">Encoded JavaScript</div>
-            <div className="sp-tag">{encoded.length} chars</div>
+            <div className="sp-tag">{encoded.length} chars{timing && ` · ${timing}`}</div>
           </div>
           <div className="sp-h">// output</div>
           <textarea
@@ -154,7 +161,7 @@ export function Playground() {
               <div className="sp-decoded">decoded: <span>{displayDecoded}</span></div>
             )}
             {error && <div className="sp-err">{error}</div>}
-            <span style={{ marginLeft: 'auto' }}>{encoded ? `${(encoded.length / Math.max(input.length, 1)).toFixed(1)}x expansion` : ''}</span>
+            <span style={{ marginLeft: 'auto' }}>{encoded ? `${(encoded.length / Math.max(input.length, 1)).toFixed(1)}x` : ''}</span>
           </div>
         </div>
       </div>

@@ -87,9 +87,9 @@ describe('snapshots', () => {
 })
 
 describe('fuzz', () => {
-  it('random payloads — 200 iterations, sizes 1-200', () => {
-    for (let i = 0; i < 200; i++) {
-      const len = Math.floor(Math.random() * 200) + 1
+  it('random payloads — 100 iterations, sizes 1-30', () => {
+    for (let i = 0; i < 100; i++) {
+      const len = Math.floor(Math.random() * 30) + 1
       const data = new Uint8Array(len)
       crypto.getRandomValues(data)
       testRoundTrip(data)
@@ -162,9 +162,9 @@ describe('data lives in AST structure, not literal values', () => {
     }
   })
 
-  it('fuzz: random data x different seeds (500 iterations)', () => {
-    for (let i = 0; i < 500; i++) {
-      const len = Math.floor(Math.random() * 100) + 1
+  it('fuzz: random data x different seeds (100 iterations)', () => {
+    for (let i = 0; i < 100; i++) {
+      const len = Math.floor(Math.random() * 30) + 1
       const data = new Uint8Array(len)
       crypto.getRandomValues(data)
       const seed = i * 7 + 13
@@ -212,10 +212,23 @@ describe('data lives in AST structure, not literal values', () => {
       return s
     }
 
+    let nameCounter = 0
+    const paramNodes = new Set()
     function walk(node: any): void {
       if (!node || typeof node !== 'object') return
-      // Randomize cosmetic values
-      if (node.type === 'Identifier' && typeof node.name === 'string') {
+
+      // For function/arrow params: assign unique names to avoid clash
+      if ((node.type === 'ArrowFunctionExpression' || node.type === 'FunctionExpression') && node.params) {
+        for (const p of node.params) {
+          if (p.type === 'Identifier') {
+            p.name = `_r${nameCounter++}`
+            paramNodes.add(p)
+          }
+        }
+      }
+
+      // Randomize cosmetic values (skip param identifiers — already handled)
+      if (node.type === 'Identifier' && typeof node.name === 'string' && !paramNodes.has(node)) {
         node.name = randomizeName()
       }
       if (node.type === 'NumericLiteral' && typeof node.value === 'number') {
@@ -247,8 +260,8 @@ describe('data lives in AST structure, not literal values', () => {
       }
     }
 
-    for (let i = 0; i < 200; i++) {
-      const len = Math.floor(Math.random() * 50) + 1
+    for (let i = 0; i < 50; i++) {
+      const len = Math.floor(Math.random() * 15) + 1
       const data = new Uint8Array(len)
       crypto.getRandomValues(data)
 

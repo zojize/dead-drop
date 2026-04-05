@@ -247,6 +247,9 @@ export function generateCompact(program: t.Program): string {
         }
         break
       }
+      case 'AwaitExpression':
+        raw(')'); parenExpr(node.argument as t.Expression); raw('await (')
+        break
       default:
         parts.push('0') // fallback
     }
@@ -305,6 +308,12 @@ export function generateCompact(program: t.Program): string {
         break
       case 'DebuggerStatement':
         raw('debugger;')
+        break
+      case 'BreakStatement':
+        raw('break;')
+        break
+      case 'ContinueStatement':
+        raw('continue;')
         break
       case 'TryStatement': {
         const n = node as t.TryStatement
