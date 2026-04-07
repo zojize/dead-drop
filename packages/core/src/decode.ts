@@ -1,7 +1,6 @@
 import { parse } from '@babel/parser'
 import type * as t from '@babel/types'
 import {
-  type Candidate,
   type EncodingContext,
   initialContext,
   filterCandidates,
@@ -18,15 +17,18 @@ import {
   MAX_EXPR_DEPTH,
 } from './context'
 
-/**
- * Decode JavaScript source code back into the original byte array.
- *
- * Rebuilds the same dynamic context-dependent tables the encoder used,
- * recovering bytes from AST structure. No options needed.
- */
 export interface DecodeOptions {
   maxExprDepth?: number
 }
+
+type WorkItem =
+  | { kind: 'expr'; node: t.Node; depth: number }
+  | { kind: 'stmt'; node: t.Node }
+  | { kind: 'block'; stmts: readonly t.Statement[] }
+  | { kind: 'byte'; value: number }
+  | { kind: 'scope-save'; scope: string[]; typedScope: any[]; inFunction: boolean }
+  | { kind: 'scope-restore'; scope: string[]; typedScope: any[]; inFunction: boolean }
+  | { kind: 'var-decl'; name: string; initNode: t.Node; depth: number }
 
 export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
   const ast = parse(jsSource, {
@@ -36,8 +38,9 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
   const bytes: number[] = []
   let hash = 0xDEADD
   const ctx: EncodingContext = { ...initialContext(), maxExprDepth: options?.maxExprDepth ?? MAX_EXPR_DEPTH }
+  const work: WorkItem[] = []
 
-  // ─── Identify a candidate key from a parsed AST node ───────────────
+  // ─── Candidate key from parsed node ────────────────────────────────
 
   function exprKey(node: t.Node): string {
     switch (node.type) {
@@ -46,29 +49,13 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
       case 'Identifier': return 'Identifier:0'
       case 'BooleanLiteral': return `BooleanLiteral:${node.value ? 1 : 0}`
       case 'NullLiteral': return 'NullLiteral:0'
-      case 'BigIntLiteral': return 'BigIntLiteral:0'
       case 'ThisExpression': return 'ThisExpression:0'
-      case 'RegExpLiteral': return 'RegExpLiteral:0' // flags are cosmetic
-      case 'BinaryExpression': {
-        const idx = (BINARY_OPS as readonly string[]).indexOf(node.operator)
-        return `BinaryExpression:${idx}`
-      }
-      case 'LogicalExpression': {
-        const idx = (LOGICAL_OPS as readonly string[]).indexOf(node.operator)
-        return `LogicalExpression:${idx}`
-      }
-      case 'AssignmentExpression': {
-        const idx = (ASSIGN_OPS as readonly string[]).indexOf(node.operator)
-        return `AssignmentExpression:${idx}`
-      }
-      case 'UnaryExpression': {
-        const idx = (UNARY_OPS as readonly string[]).indexOf(node.operator)
-        return `UnaryExpression:${idx}`
-      }
-      case 'UpdateExpression': {
-        const opOff = node.operator === '++' ? 0 : 1
-        return `UpdateExpression:${opOff * 2 + (node.prefix ? 0 : 1)}`
-      }
+      case 'RegExpLiteral': return 'RegExpLiteral:0'
+      case 'BinaryExpression': return `BinaryExpression:${(BINARY_OPS as readonly string[]).indexOf(node.operator)}`
+      case 'LogicalExpression': return `LogicalExpression:${(LOGICAL_OPS as readonly string[]).indexOf(node.operator)}`
+      case 'AssignmentExpression': return `AssignmentExpression:${(ASSIGN_OPS as readonly string[]).indexOf(node.operator)}`
+      case 'UnaryExpression': return `UnaryExpression:${(UNARY_OPS as readonly string[]).indexOf(node.operator)}`
+      case 'UpdateExpression': return `UpdateExpression:${(node.operator === '++' ? 0 : 1) * 2 + (node.prefix ? 0 : 1)}`
       case 'ConditionalExpression': return 'ConditionalExpression:0'
       case 'CallExpression': return `CallExpression:${node.arguments.length}`
       case 'OptionalCallExpression': return `OptionalCallExpression:${node.arguments.length}`
@@ -76,10 +63,7 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
       case 'MemberExpression': return `MemberExpression:${node.computed ? 1 : 0}`
       case 'OptionalMemberExpression': return `OptionalMemberExpression:${node.computed ? 1 : 0}`
       case 'ArrayExpression': {
-        // SpreadElement check: [...expr] → SpreadElement
-        if (node.elements.length === 1 && node.elements[0]?.type === 'SpreadElement') {
-          return 'SpreadElement:0'
-        }
+        if (node.elements.length === 1 && node.elements[0]?.type === 'SpreadElement') return 'SpreadElement:0'
         return `ArrayExpression:${node.elements.length}`
       }
       case 'ObjectExpression': return `ObjectExpression:${node.properties.length}`
@@ -97,17 +81,12 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
   function stmtKey(node: t.Node): string {
     switch (node.type) {
       case 'ExpressionStatement': return 'ExpressionStatement:0'
-      case 'VariableDeclaration': {
-        const kind = (node as t.VariableDeclaration).kind
-        const idx = kind === 'var' ? 0 : kind === 'let' ? 1 : 2
-        return `VariableDeclaration:${idx}`
-      }
+      case 'VariableDeclaration': return `VariableDeclaration:${node.kind === 'var' ? 0 : node.kind === 'let' ? 1 : 2}`
       case 'IfStatement': return `IfStatement:${(node as t.IfStatement).alternate ? 0 : 1}`
       case 'WhileStatement': return 'WhileStatement:0'
       case 'ForStatement': {
         const n = node as t.ForStatement
-        const v = (n.init ? 1 : 0) | (n.test ? 2 : 0) | (n.update ? 4 : 0)
-        return `ForStatement:${v}`
+        return `ForStatement:${(n.init ? 1 : 0) | (n.test ? 2 : 0) | (n.update ? 4 : 0)}`
       }
       case 'DoWhileStatement': return 'DoWhileStatement:0'
       case 'BlockStatement': return 'BlockStatement:0'
@@ -120,177 +99,125 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
       case 'DebuggerStatement': return 'DebuggerStatement:0'
       case 'BreakStatement': return 'BreakStatement:0'
       case 'ContinueStatement': return 'ContinueStatement:0'
-      default:
-        // Expression in statement position
-        return exprKey(node)
+      default: return exprKey(node)
     }
   }
 
-  // ─── Process expression children ───────────────────────────────────
+  // ─── Push expression children (LIFO order for iterative processing) ─
 
-  function processExprChildren(node: t.Node, depth: number): void {
+  function pushExprChildren(node: t.Node, depth: number): void {
     const d = depth + 1
     switch (node.type) {
       case 'BinaryExpression':
       case 'LogicalExpression':
-        processExpr((node as any).left, d); processExpr((node as any).right, d); break
+        work.push({ kind: 'expr', node: (node as any).right, depth: d })
+        work.push({ kind: 'expr', node: (node as any).left, depth: d })
+        break
       case 'AssignmentExpression':
-        processExpr((node as t.AssignmentExpression).right, d); break
+        work.push({ kind: 'expr', node: (node as t.AssignmentExpression).right, depth: d })
+        break
       case 'UnaryExpression':
-        processExpr((node as any).argument, d); break
-      case 'UpdateExpression': break // leaf
+        work.push({ kind: 'expr', node: (node as any).argument, depth: d })
+        break
       case 'ConditionalExpression': {
         const n = node as t.ConditionalExpression
-        processExpr(n.test, d); processExpr(n.consequent, d); processExpr(n.alternate, d); break
+        work.push({ kind: 'expr', node: n.alternate, depth: d })
+        work.push({ kind: 'expr', node: n.consequent, depth: d })
+        work.push({ kind: 'expr', node: n.test, depth: d })
+        break
       }
-      case 'CallExpression': {
-        const n = node as t.CallExpression
-        processExpr(n.callee, d); for (const a of n.arguments) processExpr(a, d); break
-      }
+      case 'CallExpression':
       case 'OptionalCallExpression': {
-        const n = node as t.OptionalCallExpression
-        processExpr(n.callee, d); for (const a of n.arguments) processExpr(a, d); break
+        const n = node as t.CallExpression
+        for (let i = n.arguments.length - 1; i >= 0; i--) work.push({ kind: 'expr', node: n.arguments[i], depth: d })
+        work.push({ kind: 'expr', node: n.callee, depth: d })
+        break
       }
       case 'NewExpression': {
         const n = node as t.NewExpression
-        processExpr(n.callee, d); for (const a of n.arguments) processExpr(a, d); break
+        for (let i = n.arguments.length - 1; i >= 0; i--) work.push({ kind: 'expr', node: n.arguments[i], depth: d })
+        work.push({ kind: 'expr', node: n.callee, depth: d })
+        break
       }
       case 'MemberExpression':
       case 'OptionalMemberExpression': {
         const n = node as t.MemberExpression
-        processExpr(n.object, d); if (n.computed) processExpr(n.property, d); break
+        if (n.computed) work.push({ kind: 'expr', node: n.property, depth: d })
+        work.push({ kind: 'expr', node: n.object, depth: d })
+        break
       }
       case 'ArrayExpression': {
         const n = node as t.ArrayExpression
         if (n.elements.length === 1 && n.elements[0]?.type === 'SpreadElement') {
-          processExpr((n.elements[0] as t.SpreadElement).argument, d)
-        } else { for (const el of n.elements) if (el) processExpr(el, d) }
+          work.push({ kind: 'expr', node: (n.elements[0] as t.SpreadElement).argument, depth: d })
+        } else {
+          for (let i = n.elements.length - 1; i >= 0; i--) if (n.elements[i]) work.push({ kind: 'expr', node: n.elements[i]!, depth: d })
+        }
         break
       }
       case 'ObjectExpression':
-        for (const prop of (node as t.ObjectExpression).properties) {
-          const p = prop as t.ObjectProperty; processExpr(p.key, d); processExpr(p.value, d)
+        for (let i = (node as t.ObjectExpression).properties.length - 1; i >= 0; i--) {
+          const p = (node as t.ObjectExpression).properties[i] as t.ObjectProperty
+          work.push({ kind: 'expr', node: p.value, depth: d })
+          work.push({ kind: 'expr', node: p.key, depth: d })
         }
         break
       case 'SequenceExpression':
-        for (const e of (node as t.SequenceExpression).expressions) processExpr(e, d); break
+        for (let i = (node as t.SequenceExpression).expressions.length - 1; i >= 0; i--)
+          work.push({ kind: 'expr', node: (node as t.SequenceExpression).expressions[i], depth: d })
+        break
       case 'TemplateLiteral':
-        for (const e of (node as t.TemplateLiteral).expressions) processExpr(e, d); break
+        for (let i = (node as t.TemplateLiteral).expressions.length - 1; i >= 0; i--)
+          work.push({ kind: 'expr', node: (node as t.TemplateLiteral).expressions[i], depth: d })
+        break
       case 'TaggedTemplateExpression': {
         const n = node as t.TaggedTemplateExpression
-        processExpr(n.tag, d); for (const e of n.quasi.expressions) processExpr(e, d); break
+        for (let i = n.quasi.expressions.length - 1; i >= 0; i--)
+          work.push({ kind: 'expr', node: n.quasi.expressions[i], depth: d })
+        work.push({ kind: 'expr', node: n.tag, depth: d })
+        break
       }
       case 'ArrowFunctionExpression': {
         const n = node as t.ArrowFunctionExpression
         const params = n.params.map((_, i) => nameFromHash(hash, 900 + i))
-        const ss = [...ctx.scope]; const st = [...ctx.typedScope]; const sf = ctx.inFunction
-        for (const p of params) { ctx.scope.push(p); ctx.typedScope.push({ name: p, type: 'any' }) }
-        ctx.inFunction = true
-        if (n.body.type === 'BlockStatement') {
-          const ret = n.body.body[0]
-          if (ret?.type === 'ReturnStatement') processExpr((ret as t.ReturnStatement).argument!, d)
-        } else { processExpr(n.body, d) }
-        ctx.scope = ss; ctx.typedScope = st; ctx.inFunction = sf; break
+        work.push({ kind: 'scope-restore', scope: [...ctx.scope], typedScope: [...ctx.typedScope], inFunction: ctx.inFunction })
+        const bodyNode = n.body.type === 'BlockStatement'
+          ? ((n.body as t.BlockStatement).body[0] as t.ReturnStatement)?.argument
+          : n.body
+        if (bodyNode) work.push({ kind: 'expr', node: bodyNode, depth: d })
+        // Push scope-save AFTER body (LIFO: save executes first)
+        work.push({ kind: 'scope-save', scope: params, typedScope: params.map(p => ({ name: p, type: 'any' })), inFunction: true })
+        break
       }
       case 'FunctionExpression': {
         const n = node as t.FunctionExpression
         const params = n.params.map((_, i) => nameFromHash(hash, 900 + i))
-        const ss = [...ctx.scope]; const st = [...ctx.typedScope]; const sf = ctx.inFunction
-        for (const p of params) { ctx.scope.push(p); ctx.typedScope.push({ name: p, type: 'any' }) }
-        ctx.inFunction = true
+        work.push({ kind: 'scope-restore', scope: [...ctx.scope], typedScope: [...ctx.typedScope], inFunction: ctx.inFunction })
         const ret = n.body.body[0]
-        if (ret?.type === 'ReturnStatement') processExpr((ret as t.ReturnStatement).argument!, d)
-        ctx.scope = ss; ctx.typedScope = st; ctx.inFunction = sf; break
+        if (ret?.type === 'ReturnStatement') work.push({ kind: 'expr', node: (ret as t.ReturnStatement).argument!, depth: d })
+        work.push({ kind: 'scope-save', scope: params, typedScope: params.map(p => ({ name: p, type: 'any' })), inFunction: true })
+        break
       }
-      case 'ClassExpression': {
-        const n = node as t.ClassExpression
-        if (n.superClass) processExpr(n.superClass, d); break
-      }
+      case 'ClassExpression':
+        if ((node as t.ClassExpression).superClass) work.push({ kind: 'expr', node: (node as t.ClassExpression).superClass!, depth: d })
+        break
       case 'AwaitExpression':
-        processExpr((node as t.AwaitExpression).argument, d); break
+        work.push({ kind: 'expr', node: (node as t.AwaitExpression).argument, depth: d })
+        break
+      // UpdateExpression, leaves: no children
     }
   }
 
-  // ─── Process expression: lookup byte from dynamic table ────────────
+  // ─── Push statement children ───────────────────────────────────────
 
-  /** Process expression node. Returns the candidate key used. */
-  function processExpr(node: t.Node, depth = 0): string {
-    const exprCtx = { ...ctx, expressionOnly: true, exprDepth: depth }
-    const candidates = filterCandidates(exprCtx)
-    const table = buildTable(candidates, hash)
-    const rev = buildReverseTable(table)
-
-    const key = exprKey(node)
-    const byte = rev.get(key)
-    if (byte !== undefined) {
-      bytes.push(byte)
-      hash = mixHash(hash, byte)
-    } else {
-      bytes.push(0)
-      hash = mixHash(hash, 0)
-    }
-
-    processExprChildren(node, depth)
-    return key
-  }
-
-  // ─── Process block: count byte + N statements ──────────────────────
-
-  function processBlock(stmts: readonly t.Statement[]): void {
-    const countByte = stmts.length // recover the count byte
-    bytes.push(countByte)
-    hash = mixHash(hash, countByte)
-    for (const stmt of stmts) {
-      processStatement(stmt)
-    }
-  }
-
-  // ─── Process statement: lookup byte from dynamic table ─────────────
-
-  function processStatement(node: t.Node): void {
-    const candidates = filterCandidates(ctx)
-    const table = buildTable(candidates, hash)
-    const rev = buildReverseTable(table)
-
-    // For ExpressionStatement: the byte might map to an EXPRESSION candidate
-    // (wrapped in ExpressionStatement) or the statement entry ExpressionStatement:0.
-    // Try expression key of inner expression FIRST (most entries are expressions),
-    // then fall back to statement key.
-    let byte: number | undefined
-    if (node.type === 'ExpressionStatement') {
-      const innerKey = exprKey((node as t.ExpressionStatement).expression)
-      byte = rev.get(innerKey)
-      if (byte === undefined) {
-        byte = rev.get(stmtKey(node))
-      }
-    } else {
-      byte = rev.get(stmtKey(node))
-    }
-
-    if (byte !== undefined) {
-      bytes.push(byte)
-      hash = mixHash(hash, byte)
-    } else {
-      bytes.push(0)
-      hash = mixHash(hash, 0)
-    }
-
-    // Process children based on statement type
+  function pushStmtChildren(node: t.Node, byte: number | undefined, table: any[]): void {
     switch (node.type) {
       case 'ExpressionStatement': {
-        // If the byte mapped to an expression candidate, the expression
-        // children were already consumed. If it mapped to ExpressionStatement:0,
-        // we need to process the inner expression.
-        const innerKey = exprKey((node as t.ExpressionStatement).expression)
-        const stKey = stmtKey(node)
-        // Check which key was used by looking at the table entry
         const entry = byte !== undefined ? table[byte] : null
         if (entry && entry.isStatement) {
-          // It was ExpressionStatement:0 — process inner expression
-          processExpr((node as t.ExpressionStatement).expression, 0)
+          work.push({ kind: 'expr', node: (node as t.ExpressionStatement).expression, depth: 0 })
         } else {
-          // It was an expression candidate — process expression children only
-          processExprChildren((node as t.ExpressionStatement).expression, 0)
+          pushExprChildren((node as t.ExpressionStatement).expression, 0)
         }
         break
       }
@@ -298,85 +225,156 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         const n = node as t.VariableDeclaration
         const name = nameFromHash(hash, ctx.scope.length)
         ctx.scope.push(name)
-        const initKey = processExpr(n.declarations[0].init!)
-        // Infer type from init candidate and track in typedScope (mirrors encoder)
-        const inferredType = inferTypeFromKey(initKey)
-        ctx.typedScope.push({ name, type: inferredType })
+        work.push({ kind: 'var-decl', name, initNode: n.declarations[0].init!, depth: 0 })
         break
       }
       case 'IfStatement': {
         const n = node as t.IfStatement
-        processExpr(n.test)
-        processBlock((n.consequent as t.BlockStatement).body)
-        if (n.alternate) processBlock((n.alternate as t.BlockStatement).body)
+        if (n.alternate) work.push({ kind: 'block', stmts: (n.alternate as t.BlockStatement).body })
+        work.push({ kind: 'block', stmts: (n.consequent as t.BlockStatement).body })
+        work.push({ kind: 'expr', node: n.test, depth: 0 })
         break
       }
       case 'WhileStatement': {
         const n = node as t.WhileStatement
-        processExpr(n.test)
-        const savedInLoop = ctx.inLoop
-        ctx.inLoop = true
-        processBlock((n.body as t.BlockStatement).body)
-        ctx.inLoop = savedInLoop
+        const saved = ctx.inLoop; ctx.inLoop = true
+        work.push({ kind: 'block', stmts: (n.body as t.BlockStatement).body })
+        ctx.inLoop = saved
+        work.push({ kind: 'expr', node: n.test, depth: 0 })
         break
       }
       case 'ForStatement': {
         const n = node as t.ForStatement
-        if (n.init) processExpr(n.init as t.Expression)
-        if (n.test) processExpr(n.test)
-        if (n.update) processExpr(n.update)
-        const savedInLoop = ctx.inLoop
-        ctx.inLoop = true
-        processBlock((n.body as t.BlockStatement).body)
-        ctx.inLoop = savedInLoop
+        const saved = ctx.inLoop; ctx.inLoop = true
+        work.push({ kind: 'block', stmts: (n.body as t.BlockStatement).body })
+        ctx.inLoop = saved
+        if (n.update) work.push({ kind: 'expr', node: n.update, depth: 0 })
+        if (n.test) work.push({ kind: 'expr', node: n.test, depth: 0 })
+        if (n.init) work.push({ kind: 'expr', node: n.init as t.Expression, depth: 0 })
         break
       }
       case 'DoWhileStatement': {
         const n = node as t.DoWhileStatement
-        const savedInLoop = ctx.inLoop
-        ctx.inLoop = true
-        processBlock((n.body as t.BlockStatement).body)
-        ctx.inLoop = savedInLoop
-        processExpr(n.test)
+        work.push({ kind: 'expr', node: n.test, depth: 0 })
+        const saved = ctx.inLoop; ctx.inLoop = true
+        work.push({ kind: 'block', stmts: (n.body as t.BlockStatement).body })
+        ctx.inLoop = saved
         break
       }
       case 'BlockStatement':
-        processBlock((node as t.BlockStatement).body)
+        work.push({ kind: 'block', stmts: (node as t.BlockStatement).body })
         break
       case 'TryStatement': {
         const n = node as t.TryStatement
-        processBlock(n.block.body)
-        processBlock(n.handler!.body.body)
+        work.push({ kind: 'block', stmts: n.handler!.body.body })
+        work.push({ kind: 'block', stmts: n.block.body })
         break
       }
       case 'SwitchStatement': {
         const n = node as t.SwitchStatement
-        processExpr(n.discriminant)
-        for (const c of n.cases) {
-          if (c.test) processExpr(c.test)
-          processBlock(c.consequent)
+        for (let i = n.cases.length - 1; i >= 0; i--) {
+          work.push({ kind: 'block', stmts: n.cases[i].consequent })
+          if (n.cases[i].test) work.push({ kind: 'expr', node: n.cases[i].test!, depth: 0 })
         }
+        work.push({ kind: 'expr', node: n.discriminant, depth: 0 })
         break
       }
-      case 'LabeledStatement': {
-        const n = node as t.LabeledStatement
-        processBlock((n.body as t.BlockStatement).body)
+      case 'LabeledStatement':
+        work.push({ kind: 'block', stmts: ((node as t.LabeledStatement).body as t.BlockStatement).body })
         break
-      }
       case 'ThrowStatement':
-        processExpr((node as t.ThrowStatement).argument)
+        work.push({ kind: 'expr', node: (node as t.ThrowStatement).argument, depth: 0 })
         break
       case 'ReturnStatement':
-        processExpr((node as t.ReturnStatement).argument!)
+        if ((node as t.ReturnStatement).argument) work.push({ kind: 'expr', node: (node as t.ReturnStatement).argument!, depth: 0 })
         break
-      // EmptyStatement, DebuggerStatement, BreakStatement, ContinueStatement: no children
     }
   }
 
-  // ─── Main ──────────────────────────────────────────────────────────
+  // ─── Main iterative loop ───────────────────────────────────────────
 
-  for (const stmt of ast.program.body) {
-    processStatement(stmt)
+  // Seed with top-level statements (reverse for LIFO)
+  for (let i = ast.program.body.length - 1; i >= 0; i--)
+    work.push({ kind: 'stmt', node: ast.program.body[i] })
+
+  while (work.length > 0) {
+    const item = work.pop()!
+
+    switch (item.kind) {
+      case 'expr': {
+        const exprCtx = { ...ctx, expressionOnly: true, exprDepth: item.depth }
+        const candidates = filterCandidates(exprCtx)
+        const table = buildTable(candidates, hash)
+        const rev = buildReverseTable(table)
+        const key = exprKey(item.node)
+        const byte = rev.get(key)
+        if (byte !== undefined) { bytes.push(byte); hash = mixHash(hash, byte) }
+        else { bytes.push(0); hash = mixHash(hash, 0) }
+        pushExprChildren(item.node, item.depth)
+        break
+      }
+
+      case 'stmt': {
+        const candidates = filterCandidates(ctx)
+        const table = buildTable(candidates, hash)
+        const rev = buildReverseTable(table)
+        let key: string
+        let byte: number | undefined
+        if (item.node.type === 'ExpressionStatement') {
+          const innerKey = exprKey((item.node as t.ExpressionStatement).expression)
+          byte = rev.get(innerKey)
+          if (byte === undefined) byte = rev.get(stmtKey(item.node))
+          key = byte !== undefined ? (rev.has(innerKey) ? innerKey : stmtKey(item.node)) : stmtKey(item.node)
+        } else {
+          key = stmtKey(item.node)
+          byte = rev.get(key)
+        }
+        if (byte !== undefined) { bytes.push(byte); hash = mixHash(hash, byte) }
+        else { bytes.push(0); hash = mixHash(hash, 0) }
+        pushStmtChildren(item.node, byte, table)
+        break
+      }
+
+      case 'block': {
+        bytes.push(item.stmts.length)
+        hash = mixHash(hash, item.stmts.length)
+        for (let i = item.stmts.length - 1; i >= 0; i--)
+          work.push({ kind: 'stmt', node: item.stmts[i] })
+        break
+      }
+
+      case 'byte':
+        bytes.push(item.value)
+        break
+
+      case 'scope-save':
+        for (const p of item.scope) ctx.scope.push(p)
+        for (const e of item.typedScope) ctx.typedScope.push(e)
+        ctx.inFunction = item.inFunction
+        break
+
+      case 'scope-restore':
+        ctx.scope = item.scope
+        ctx.typedScope = item.typedScope
+        ctx.inFunction = item.inFunction
+        break
+
+      case 'var-decl': {
+        // Process the init expression and infer type
+        const exprCtx = { ...ctx, expressionOnly: true, exprDepth: item.depth }
+        const candidates = filterCandidates(exprCtx)
+        const table = buildTable(candidates, hash)
+        const rev = buildReverseTable(table)
+        const key = exprKey(item.initNode)
+        const byte = rev.get(key)
+        if (byte !== undefined) { bytes.push(byte); hash = mixHash(hash, byte) }
+        else { bytes.push(0); hash = mixHash(hash, 0) }
+        const inferredType = inferTypeFromKey(key)
+        ctx.typedScope.push({ name: item.name, type: inferredType })
+        pushExprChildren(item.initNode, item.depth)
+        break
+      }
+    }
   }
 
   if (bytes.length < 4) return new Uint8Array(0)
