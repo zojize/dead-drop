@@ -18,17 +18,20 @@ npm install @zojize/dead-drop
 ## Quick start
 
 ```typescript
-import { encode, decode } from '@zojize/dead-drop'
+import { encode, decode, createCodec } from '@zojize/dead-drop'
 
+// Zero-config
 const js = encode(new TextEncoder().encode('attack at dawn'))
-// -> '/x/gim;((((_p0,_p1)=>...'
-
-const bytes = decode(js)  // just a string — no options needed
+const bytes = decode(js)
 new TextDecoder().decode(bytes) // -> 'attack at dawn'
 
-// Optional seed changes cosmetic values (names, numbers, strings)
-// but decoded bytes are always the same
-const js2 = encode(new TextEncoder().encode('hello'), { seed: 42 })
+// With cosmetic seed (changes appearance, not decoded data)
+encode(new TextEncoder().encode('hello'), { seed: 42 })
+
+// Factory: shared config for encoder + decoder
+const codec = createCodec({ seed: 42, maxExprDepth: 30 })
+const encoded = codec.encode(new TextEncoder().encode('secret'))
+const decoded = codec.decode(encoded) // round-trips correctly
 ```
 
 ## CLI
@@ -149,8 +152,9 @@ return bytes[4 .. 4+length]
   depends on a running structural hash mixed with each consumed byte.
   Both encoder and decoder maintain identical hash state.
 
-- **Fully iterative.** Encoder, decoder, and code generator use explicit
-  work stacks. No recursion, no stack overflow.
+- **`createCodec` factory.** Shared configuration between encoder and
+  decoder: `createCodec({ seed, maxExprDepth })` returns `{ encode, decode }`.
+  `maxExprDepth` limits AST nesting for browser parser compatibility.
 
 - **Custom code generator.** Handles 20+ AST node types with correct
   parenthesization, regex adjacency, and object/block disambiguation.
