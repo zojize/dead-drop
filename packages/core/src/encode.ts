@@ -288,8 +288,10 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
     if (isPad()) return []
     const countByte = readByte()
     hash = mixHash(hash, countByte)
+    ctx.blockDepth++
     const stmts: t.Statement[] = []
     for (let i = 0; i < countByte; i++) stmts.push(buildTopLevel())
+    ctx.blockDepth--
     return stmts
   }
 
