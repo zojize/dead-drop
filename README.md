@@ -154,7 +154,10 @@ return bytes[4 .. 4+length]
 
 - **`createCodec` factory.** Shared configuration between encoder and
   decoder: `createCodec({ seed, maxExprDepth })` returns `{ encode, decode }`.
-  `maxExprDepth` limits AST nesting for browser parser compatibility.
+  `maxExprDepth` hard-caps expression nesting depth — at the limit, all
+  expression children become cosmetic (non-data-carrying). This keeps the
+  AST shallow enough for browser parsers (which use recursive descent and
+  overflow on deep trees).
 
 - **Custom code generator.** Handles 20+ AST node types with correct
   parenthesization, regex adjacency, and object/block disambiguation.
@@ -166,7 +169,9 @@ return bytes[4 .. 4+length]
 
 ```bash
 bun install
-bun run test          # 36 tests including fuzz, eval safety, randomization invariant
+bun run lint          # lint (uses @antfu/eslint-config)
+bun run lint:fix      # auto-fix lint issues
+bun run test          # 38 tests including fuzz and randomization invariant
 bun run typecheck     # typecheck all packages
 bun run knip          # check for unused deps/exports
 ```
