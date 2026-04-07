@@ -130,7 +130,7 @@ const UPDATE_OPS = ['++', '--'] as const
 const ASSIGN_OPS = ['=', '+=', '-=', '*=', '/=', '%=', '|=', '&=', '^=', '<<=', '>>=', '>>>=', '**=', '??=', '||=', '&&='] as const
 const REGEXP_FLAGS = ['d', 'g', 'i', 'm', 's', 'u'] as const
 
-export { BINARY_OPS, LOGICAL_OPS, UNARY_OPS, UPDATE_OPS, ASSIGN_OPS, REGEXP_FLAGS }
+export { ASSIGN_OPS, BINARY_OPS, LOGICAL_OPS, REGEXP_FLAGS, UNARY_OPS, UPDATE_OPS }
 
 /** Build the full candidate pool (all possible entries across all contexts). */
 function buildAllCandidates(): Candidate[] {
@@ -148,8 +148,11 @@ function buildAllCandidates(): Candidate[] {
   c.push({ key: 'BigIntLiteral:0', nodeType: 'BigIntLiteral', variant: 0, children: [], weight: 6, isStatement: false })
   c.push({ key: 'ThisExpression:0', nodeType: 'ThisExpression', variant: 0, children: [], weight: 6, isStatement: false })
 
-  // RegExpLiteral — single leaf entry (flags are cosmetic, randomized by encoder)
-  c.push({ key: 'RegExpLiteral:0', nodeType: 'RegExpLiteral', variant: 0, children: [], weight: 6, isStatement: false })
+  // RegExpLiteral — 64 leaf entries using flag combinations (bitmask 0-63)
+  // Flags: d(0), g(1), i(2), m(3), s(4), u(5) — each combo is structurally unique
+  for (let flags = 0; flags < 64; flags++) {
+    c.push({ key: `RegExpLiteral:${flags}`, nodeType: 'RegExpLiteral', variant: flags, children: [], weight: flags === 0 ? 6 : 2, isStatement: false })
+  }
 
   // Binary operators (weight 1, 2 children)
   for (let i = 0; i < BINARY_OPS.length; i++) {
@@ -181,17 +184,17 @@ function buildAllCandidates(): Candidate[] {
 
   // Call/New expression — arg count as variant (type-gated: only when scope has callable/constructable)
   for (let n = 0; n < 19; n++) {
-    const ch: SlotKind[] = ['expr', ...Array(n).fill('expr') as SlotKind[]]
+    const ch: SlotKind[] = ['expr', ...Array.from<SlotKind>({ length: n }).fill('expr')]
     c.push({ key: `CallExpression:${n}`, nodeType: 'CallExpression', variant: n, children: ch, weight: n <= 3 ? 1.5 : n <= 8 ? 0.8 : 0.4, isStatement: false })
   }
   for (let n = 0; n < 16; n++) {
-    const ch: SlotKind[] = ['expr', ...Array(n).fill('expr') as SlotKind[]]
+    const ch: SlotKind[] = ['expr', ...Array.from<SlotKind>({ length: n }).fill('expr')]
     c.push({ key: `NewExpression:${n}`, nodeType: 'NewExpression', variant: n, children: ch, weight: n <= 3 ? 1.2 : 0.5, isStatement: false })
   }
 
   // OptionalCallExpression — type-gated: expr?.(args) throws if expr is non-null non-callable
   for (let n = 0; n < 19; n++) {
-    const ch: SlotKind[] = ['expr', ...Array(n).fill('expr') as SlotKind[]]
+    const ch: SlotKind[] = ['expr', ...Array.from<SlotKind>({ length: n }).fill('expr')]
     c.push({ key: `OptionalCallExpression:${n}`, nodeType: 'OptionalCallExpression', variant: n, children: ch, weight: n <= 3 ? 1.2 : n <= 8 ? 0.6 : 0.3, isStatement: false })
   }
 
@@ -204,26 +207,28 @@ function buildAllCandidates(): Candidate[] {
 
   // Array/Object — element/prop count (extended to 0-31 for more unique candidates)
   for (let n = 0; n < 32; n++) {
-    c.push({ key: `ArrayExpression:${n}`, nodeType: 'ArrayExpression', variant: n, children: Array(n).fill('expr') as SlotKind[], weight: n <= 3 ? 1.5 : n <= 8 ? 0.6 : 0.15, isStatement: false })
+    c.push({ key: `ArrayExpression:${n}`, nodeType: 'ArrayExpression', variant: n, children: Array.from<SlotKind>({ length: n }).fill('expr'), weight: n <= 3 ? 1.5 : n <= 8 ? 0.6 : 0.15, isStatement: false })
   }
   for (let n = 0; n < 32; n++) {
     const ch: SlotKind[] = []
-    for (let j = 0; j < n; j++) { ch.push('expr', 'expr') }
+    for (let j = 0; j < n; j++) {
+      ch.push('expr', 'expr')
+    }
     c.push({ key: `ObjectExpression:${n}`, nodeType: 'ObjectExpression', variant: n, children: ch, weight: n <= 3 ? 1.2 : n <= 8 ? 0.5 : 0.1, isStatement: false })
   }
 
   // Sequence expression (count 2-29, extended range)
   for (let n = 2; n <= 29; n++) {
-    c.push({ key: `SequenceExpression:${n - 2}`, nodeType: 'SequenceExpression', variant: n - 2, children: Array(n).fill('expr') as SlotKind[], weight: n <= 4 ? 0.8 : 0.1, isStatement: false })
+    c.push({ key: `SequenceExpression:${n - 2}`, nodeType: 'SequenceExpression', variant: n - 2, children: Array.from<SlotKind>({ length: n }).fill('expr'), weight: n <= 4 ? 0.8 : 0.1, isStatement: false })
   }
 
   // Template literals (extended to 0-16)
   for (let n = 0; n < 17; n++) {
-    c.push({ key: `TemplateLiteral:${n}`, nodeType: 'TemplateLiteral', variant: n, children: Array(n).fill('expr') as SlotKind[], weight: n <= 2 ? 1 : 0.15, isStatement: false })
+    c.push({ key: `TemplateLiteral:${n}`, nodeType: 'TemplateLiteral', variant: n, children: Array.from<SlotKind>({ length: n }).fill('expr'), weight: n <= 2 ? 1 : 0.15, isStatement: false })
   }
   // TaggedTemplateExpression (type-gated: tag must be callable)
   for (let n = 0; n < 8; n++) {
-    c.push({ key: `TaggedTemplateExpression:${n}`, nodeType: 'TaggedTemplateExpression', variant: n, children: ['expr', ...Array(n).fill('expr') as SlotKind[]], weight: n <= 2 ? 0.8 : 0.3, isStatement: false })
+    c.push({ key: `TaggedTemplateExpression:${n}`, nodeType: 'TaggedTemplateExpression', variant: n, children: ['expr', ...Array.from<SlotKind>({ length: n }).fill('expr')], weight: n <= 2 ? 0.8 : 0.3, isStatement: false })
   }
 
   // Arrow/Function expression — param count (extended to 0-23)
@@ -243,8 +248,10 @@ function buildAllCandidates(): Candidate[] {
 
   // ── Statement candidates (only available in statement context) ──
 
-  // ExpressionStatement wraps an expression (weight 3 — very common)
-  c.push({ key: 'ExpressionStatement:0', nodeType: 'ExpressionStatement', variant: 0, children: ['expr'], weight: 3, isStatement: true })
+  // ExpressionStatement is NOT a candidate — expression candidates in statement context
+  // are wrapped in ExpressionStatement automatically by the encoder's default case.
+  // Having ExpressionStatement:0 as a separate candidate creates ambiguity in the decoder
+  // (can't distinguish "expression selected directly" from "ExpressionStatement selected + inner expr").
 
   // VariableDeclaration: var/let/const (weight 2)
   c.push({ key: 'VariableDeclaration:0', nodeType: 'VariableDeclaration', variant: 0, children: ['expr'], weight: 2, isStatement: true }) // var
@@ -261,9 +268,12 @@ function buildAllCandidates(): Candidate[] {
   // ForStatement × 8 null combos (weight 0.8)
   for (let v = 0; v < 8; v++) {
     const ch: SlotKind[] = []
-    if (v & 1) ch.push('expr')
-    if (v & 2) ch.push('expr')
-    if (v & 4) ch.push('expr')
+    if (v & 1)
+      ch.push('expr')
+    if (v & 2)
+      ch.push('expr')
+    if (v & 4)
+      ch.push('expr')
     ch.push('block')
     c.push({ key: `ForStatement:${v}`, nodeType: 'ForStatement', variant: v, children: ch, weight: 0.8, isStatement: true })
   }
@@ -280,7 +290,9 @@ function buildAllCandidates(): Candidate[] {
   // SwitchStatement × case counts 0-15 (weight varies)
   for (let n = 0; n <= 15; n++) {
     const ch: SlotKind[] = ['expr']
-    for (let j = 0; j < n; j++) { ch.push('expr', 'block') }
+    for (let j = 0; j < n; j++) {
+      ch.push('expr', 'block')
+    }
     c.push({ key: `SwitchStatement:${n}`, nodeType: 'SwitchStatement', variant: n, children: ch, weight: n <= 3 ? 0.6 : 0.2, isStatement: true })
   }
 
@@ -323,10 +335,11 @@ export function filterCandidates(ctx: EncodingContext): Candidate[] {
   const hasMemberSafe = scopeHasType(ctx.typedScope, MEMBER_SAFE_TYPES)
   const hasAnyScope = ctx.typedScope.length > 0
 
-  return ALL_CANDIDATES.filter(c => {
+  return ALL_CANDIDATES.filter((c) => {
     // Block depth limit: filter out block-containing statements when deep
     if (ctx.maxExprDepth < Infinity && ctx.blockDepth >= Math.floor(ctx.maxExprDepth / 3)) {
-      if (c.isStatement && c.children.some((ch: string) => ch === 'block')) return false
+      if (c.isStatement && c.children.includes('block'))
+        return false
     }
 
     // Expression depth limit: filter out non-leaf EXPRESSIONS when deep.
@@ -339,39 +352,56 @@ export function filterCandidates(ctx: EncodingContext): Candidate[] {
     // The weight scaling already handles this (10000x leaf bias).
 
     // Expression-only context: only expressions
-    if (ctx.expressionOnly && c.isStatement) return false
+    if (ctx.expressionOnly && c.isStatement)
+      return false
 
     // Statement context: BOTH statements and expressions are available.
     // Expressions are implicitly wrapped in ExpressionStatement by the encoder.
     // The decoder identifies them from the ExpressionStatement's inner expression.
 
     // Context-gated entries
-    if (c.nodeType === 'ReturnStatement' && !ctx.inFunction) return false
-    if (c.nodeType === 'BreakStatement' && !ctx.inLoop) return false
-    if (c.nodeType === 'ContinueStatement' && !ctx.inLoop) return false
-    if (c.nodeType === 'AwaitExpression' && !ctx.inAsync) return false
+    if (c.nodeType === 'ReturnStatement' && !ctx.inFunction)
+      return false
+    if (c.nodeType === 'BreakStatement' && !ctx.inLoop)
+      return false
+    if (c.nodeType === 'ContinueStatement' && !ctx.inLoop)
+      return false
+    if (c.nodeType === 'AwaitExpression' && !ctx.inAsync)
+      return false
 
     // Type-safety gates: filter candidates that would cause runtime errors
-    if (c.nodeType === 'CallExpression' && !hasCallable) return false
-    if (c.nodeType === 'OptionalCallExpression' && !hasCallable) return false
-    if (c.nodeType === 'NewExpression' && !hasConstructable) return false
-    if (c.nodeType === 'MemberExpression' && !hasMemberSafe) return false
-    if (c.nodeType === 'TaggedTemplateExpression' && !hasCallable) return false
-    if (c.nodeType === 'AssignmentExpression' && !hasAnyScope) return false
-    if (c.nodeType === 'UpdateExpression' && !hasAnyScope) return false
+    if (c.nodeType === 'CallExpression' && !hasCallable)
+      return false
+    if (c.nodeType === 'OptionalCallExpression' && !hasCallable)
+      return false
+    if (c.nodeType === 'NewExpression' && !hasConstructable)
+      return false
+    if (c.nodeType === 'MemberExpression' && !hasMemberSafe)
+      return false
+    if (c.nodeType === 'TaggedTemplateExpression' && !hasCallable)
+      return false
+    if (c.nodeType === 'AssignmentExpression' && !hasAnyScope)
+      return false
+    if (c.nodeType === 'UpdateExpression' && !hasAnyScope)
+      return false
     // ClassExpression with superClass — super must be constructable
-    if (c.nodeType === 'ClassExpression' && c.variant === 1 && !hasConstructable) return false
+    if (c.nodeType === 'ClassExpression' && c.variant === 1 && !hasConstructable)
+      return false
     // SpreadElement — argument must be iterable, can't guarantee
-    if (c.nodeType === 'SpreadElement') return false
+    if (c.nodeType === 'SpreadElement')
+      return false
     // 'in' operator (BINARY_OPS index 15) — RHS must be object, can't guarantee
-    if (c.nodeType === 'BinaryExpression' && c.variant === 15) return false
+    if (c.nodeType === 'BinaryExpression' && c.variant === 15)
+      return false
     // 'delete' operator (UNARY_OPS index 6) — 'delete ident' is illegal in strict mode
-    if (c.nodeType === 'UnaryExpression' && c.variant === 6) return false
+    if (c.nodeType === 'UnaryExpression' && c.variant === 6)
+      return false
     // BigIntLiteral — mixed BigInt/Number operations throw TypeError
-    if (c.nodeType === 'BigIntLiteral') return false
+    if (c.nodeType === 'BigIntLiteral')
+      return false
 
     return true
-  }).map(c => {
+  }).map((c) => {
     let w = c.weight
 
     // Dynamic weight: Identifier gets heavier with more scope entries
@@ -383,21 +413,24 @@ export function filterCandidates(ctx: EncodingContext): Candidate[] {
     if (ctx.exprDepth > 0 && ctx.maxExprDepth < Infinity) {
       const depthRatio = ctx.exprDepth / ctx.maxExprDepth
       if (c.children.length === 0) {
-        w *= Math.pow(10, depthRatio * 4)
-      } else {
-        w *= Math.pow(0.1, depthRatio * 4)
+        w *= 10 ** (depthRatio * 4)
+      }
+      else {
+        w *= 0.1 ** (depthRatio * 4)
       }
     }
-
 
     return w !== c.weight ? { ...c, weight: w } : c
   })
 }
 
-/** Build a BIJECTIVE 256-entry table from weighted candidates using hash as seed.
- *  Each byte 0-255 maps to a UNIQUE candidate key. No duplicates. */
+/**
+ * Build a BIJECTIVE 256-entry table from weighted candidates using hash as seed.
+ *  Each byte 0-255 maps to a UNIQUE candidate key. No duplicates.
+ */
 export function buildTable(candidates: Candidate[], hash: number): Candidate[] {
-  if (candidates.length === 0) throw new Error('No candidates for context')
+  if (candidates.length === 0)
+    throw new Error('No candidates for context')
 
   // Deterministic PRNG
   let s = hash | 0
@@ -424,10 +457,12 @@ export function buildTable(candidates: Candidate[], hash: number): Candidate[] {
 
   // Take unique candidates in priority order
   for (const { c } of scored) {
-    if (usedKeys.has(c.key)) continue
+    if (usedKeys.has(c.key))
+      continue
     usedKeys.add(c.key)
     table.push(c)
-    if (table.length === 256) break
+    if (table.length === 256)
+      break
   }
 
   // If we still need more (< 256 unique candidates), this is a problem.
@@ -460,7 +495,8 @@ export function buildReverseTable(table: Candidate[]): Map<string, number> {
   // First occurrence wins (for duplicate candidates from weighting)
   for (let b = 0; b < 256; b++) {
     const key = table[b].key
-    if (!rev.has(key)) rev.set(key, b)
+    if (!rev.has(key))
+      rev.set(key, b)
   }
   return rev
 }

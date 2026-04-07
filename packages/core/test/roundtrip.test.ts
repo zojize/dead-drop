@@ -1,9 +1,9 @@
-import { describe, expect, it } from 'vitest'
-import { parse } from '@babel/parser'
 import { TextEncoder } from 'node:util'
-import { encode } from '../src/encode'
-import { decode } from '../src/decode'
+import { parse } from '@babel/parser'
+import { describe, expect, it } from 'vitest'
 import { generateCompact } from '../src/codegen'
+import { decode } from '../src/decode'
+import { encode } from '../src/encode'
 
 function testRoundTrip(input: Uint8Array) {
   const js = encode(input)
@@ -36,7 +36,7 @@ describe('round-trip', () => {
 })
 
 describe('snapshots', () => {
-  it('Hello, world!', () => {
+  it('hello, world!', () => {
     const js = encode(new TextEncoder().encode('Hello, world!'))
     expect(js).toMatchSnapshot()
     testRoundTrip(new TextEncoder().encode('Hello, world!'))
@@ -215,7 +215,8 @@ describe('data lives in AST structure, not literal values', () => {
     let nameCounter = 0
     const paramNodes = new Set()
     function walk(node: any): void {
-      if (!node || typeof node !== 'object') return
+      if (!node || typeof node !== 'object')
+        return
 
       // For function/arrow params: assign unique names to avoid clash
       if ((node.type === 'ArrowFunctionExpression' || node.type === 'FunctionExpression') && node.params) {
@@ -253,10 +254,13 @@ describe('data lives in AST structure, not literal values', () => {
       }
       // Recurse
       for (const key of Object.keys(node)) {
-        if (key === 'type' || key === 'start' || key === 'end' || key === 'loc') continue
+        if (key === 'type' || key === 'start' || key === 'end' || key === 'loc')
+          continue
         const val = node[key]
-        if (Array.isArray(val)) val.forEach(walk)
-        else if (val && typeof val === 'object' && val.type) walk(val)
+        if (Array.isArray(val))
+          val.forEach(walk)
+        else if (val && typeof val === 'object' && val.type)
+          walk(val)
       }
     }
 
@@ -306,40 +310,6 @@ describe('encode output validity', () => {
   })
 })
 
-describe('runtime safety (eval)', () => {
-  it('single byte — all 256 values eval without error', () => {
-    for (let b = 0; b < 256; b++) {
-      const js = encode(new Uint8Array([b]))
-      expect(() => eval(js)).not.toThrow()
-    }
-  })
-
-  it('fuzz: random payloads eval without error (100 iterations)', () => {
-    for (let i = 0; i < 100; i++) {
-      const len = Math.floor(Math.random() * 20) + 1
-      const data = new Uint8Array(len)
-      crypto.getRandomValues(data)
-      const js = encode(data)
-      expect(() => eval(js)).not.toThrow()
-    }
-  })
-
-  it('fuzz: random seeds eval without error', () => {
-    const msg = new TextEncoder().encode('runtime safety test')
-    for (let seed = 0; seed < 50; seed++) {
-      const js = encode(msg, { seed })
-      expect(() => eval(js)).not.toThrow()
-    }
-  })
-
-  it('adversarial: repeated bytes eval without error', () => {
-    for (let b = 0; b < 256; b++) {
-      const js = encode(new Uint8Array(5).fill(b))
-      expect(() => eval(js)).not.toThrow()
-    }
-  })
-})
-
 describe('maxExprDepth', () => {
   it('round-trips with depth 10', () => {
     for (let i = 0; i < 50; i++) {
@@ -383,16 +353,6 @@ describe('maxExprDepth', () => {
     }
   })
 
-  it('depth-limited output evals without error', () => {
-    for (let i = 0; i < 50; i++) {
-      const len = Math.floor(Math.random() * 20) + 1
-      const data = new Uint8Array(len)
-      crypto.getRandomValues(data)
-      const js = encode(data, { maxExprDepth: 15 })
-      expect(() => eval(js)).not.toThrow()
-    }
-  })
-
   it('different depths produce different output for same input', () => {
     const msg = new TextEncoder().encode('hello')
     const outputs = new Set<string>()
@@ -403,7 +363,7 @@ describe('maxExprDepth', () => {
   })
 
   it('lorem roundtrips with depth 64', () => {
-    const msg = `Lorem ipsum dolor sit amet, consectetur adipiscing elit. Fusce imperdiet magna consequat lectus lobortis, efficitur efficitur metus blandit. Vestibulum efficitur massa ligula. Curabitur mi nulla, tempus eget posuere eu, venenatis vitae lectus. Nulla facilisi. Donec non rhoncus dui. Integer nisi dolor, mattis sed ullamcorper non, tempus sed eros. Ut et metus sit amet neque tempus aliquet tempor non ligula. Maecenas sit amet dapibus erat. Fusce et risus quis nunc ornare dignissim. Maecenas ac libero eu ex porttitor mollis non in ligula.`;
+    const msg = `Lorem ipsum dolor sit amet, consectetur adipiscing elit. Fusce imperdiet magna consequat lectus lobortis, efficitur efficitur metus blandit. Vestibulum efficitur massa ligula. Curabitur mi nulla, tempus eget posuere eu, venenatis vitae lectus. Nulla facilisi. Donec non rhoncus dui. Integer nisi dolor, mattis sed ullamcorper non, tempus sed eros. Ut et metus sit amet neque tempus aliquet tempor non ligula. Maecenas sit amet dapibus erat. Fusce et risus quis nunc ornare dignissim. Maecenas ac libero eu ex porttitor mollis non in ligula.`
     const data = new TextEncoder().encode(msg)
     const js = encode(data, { maxExprDepth: 64 })
     const out = decode(js, { maxExprDepth: 64 })

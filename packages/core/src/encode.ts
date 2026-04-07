@@ -1,22 +1,22 @@
+import type { Candidate, EncodingContext } from './context'
 import * as t from '@babel/types'
 import { generateCompact } from './codegen'
 import {
-  type Candidate,
-  type EncodingContext,
-  initialContext,
-  filterCandidates,
+  ASSIGN_OPS,
+  BINARY_OPS,
   buildTable,
+
+  filterCandidates,
+  inferTypeFromKey,
+  initialContext,
+  labelFromHash,
+  LOGICAL_OPS,
+  MAX_EXPR_DEPTH,
   mixHash,
   nameFromHash,
-  labelFromHash,
-  inferTypeFromKey,
-  BINARY_OPS,
-  LOGICAL_OPS,
+  REGEXP_FLAGS,
   UNARY_OPS,
   UPDATE_OPS,
-  ASSIGN_OPS,
-  REGEXP_FLAGS,
-  MAX_EXPR_DEPTH,
 } from './context'
 
 export interface EncodeOptions {
@@ -53,7 +53,9 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
   const ctx: EncodingContext = { ...initialContext(), maxExprDepth: opts.maxExprDepth ?? MAX_EXPR_DEPTH }
   const isPad = () => cursor >= prefixed.length
 
-  function readByte(): number { return prefixed[cursor++] }
+  function readByte(): number {
+    return prefixed[cursor++]
+  }
 
   function cosmeticIdent(): string {
     if (ctx.typedScope.length > 0 && rng() % 3 === 0) {
@@ -61,7 +63,9 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
     }
     return SAFE_IDENTS[rng() % SAFE_IDENTS.length]
   }
-  function cosmeticNumber(): number { return rng() % 1000 }
+  function cosmeticNumber(): number {
+    return rng() % 1000
+  }
   function cosmeticString(): string {
     const chars = 'abcdefghijklmnopqrstuvwxyz'
     const len = 1 + (rng() % 4)
@@ -72,7 +76,8 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
   function flagsString(bitmask: number): string {
     let s = ''
     for (let i = 0; i < REGEXP_FLAGS.length; i++) {
-      if (bitmask & (1 << i)) s += REGEXP_FLAGS[i]
+      if (bitmask & (1 << i))
+        s += REGEXP_FLAGS[i]
     }
     return s
   }
@@ -92,8 +97,9 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
 
   // ─── Recursive expression builder ──────────────────────────────────
 
-  function buildExpr(depth: number): { node: t.Expression; candidate: Candidate | null } {
-    if (isPad()) return { node: padLeafExpr(), candidate: null }
+  function buildExpr(depth: number): { node: t.Expression, candidate: Candidate | null } {
+    if (isPad())
+      return { node: padLeafExpr(), candidate: null }
 
     const byte = readByte()
     const exprCtx = { ...ctx, expressionOnly: true, exprDepth: depth }
@@ -102,29 +108,33 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
     const c = table[byte]
     hash = mixHash(hash, byte)
 
-    const node = buildExprNode(c, depth)
+    const cosmetic = ctx.maxExprDepth < Infinity && depth >= ctx.maxExprDepth
+    const node = buildExprNode(c, depth, cosmetic)
     return { node, candidate: c }
   }
 
-  function buildExprNode(c: Candidate, depth: number): t.Expression {
+  function buildExprNode(c: Candidate, depth: number, cosmeticChildren = false): t.Expression {
+    // At max depth, all children become cosmetic (non-data-carrying) — hard depth cap
+    const child = cosmeticChildren ? padLeafExpr : () => buildExpr(depth + 1).node
+
     switch (c.nodeType) {
       case 'NumericLiteral': return t.numericLiteral(cosmeticNumber())
       case 'StringLiteral': return t.stringLiteral(cosmeticString())
       case 'Identifier': return t.identifier(cosmeticIdent())
       case 'BooleanLiteral': return t.booleanLiteral(c.variant === 1)
       case 'NullLiteral': return t.nullLiteral()
-      case 'RegExpLiteral': return t.regExpLiteral(cosmeticString(), flagsString(rng() % 64))
+      case 'RegExpLiteral': return t.regExpLiteral(cosmeticString(), flagsString(c.variant))
       case 'ThisExpression': return t.thisExpression()
       case 'BinaryExpression':
-        return t.binaryExpression(BINARY_OPS[c.variant] as any, buildExpr(depth + 1).node, buildExpr(depth + 1).node)
+        return t.binaryExpression(BINARY_OPS[c.variant] as any, child(), child())
       case 'LogicalExpression':
-        return t.logicalExpression(LOGICAL_OPS[c.variant] as any, buildExpr(depth + 1).node, buildExpr(depth + 1).node)
+        return t.logicalExpression(LOGICAL_OPS[c.variant] as any, child(), child())
       case 'AssignmentExpression': {
         const lhs = ctx.typedScope.length > 0 ? ctx.typedScope[rng() % ctx.typedScope.length].name : cosmeticIdent()
-        return t.assignmentExpression(ASSIGN_OPS[c.variant] as any, t.identifier(lhs), buildExpr(depth + 1).node)
+        return t.assignmentExpression(ASSIGN_OPS[c.variant] as any, t.identifier(lhs), child())
       }
       case 'UnaryExpression':
-        return t.unaryExpression(UNARY_OPS[c.variant] as any, buildExpr(depth + 1).node, true)
+        return t.unaryExpression(UNARY_OPS[c.variant] as any, child(), true)
       case 'UpdateExpression': {
         const op = UPDATE_OPS[Math.floor(c.variant / 2)]
         const prefix = c.variant % 2 === 0
@@ -132,43 +142,45 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         return t.updateExpression(op as any, t.identifier(name), prefix)
       }
       case 'ConditionalExpression':
-        return t.conditionalExpression(buildExpr(depth + 1).node, buildExpr(depth + 1).node, buildExpr(depth + 1).node)
+        return t.conditionalExpression(child(), child(), child())
       case 'CallExpression': {
-        const callee = buildExpr(depth + 1).node
-        const args = Array.from({ length: c.variant }, () => buildExpr(depth + 1).node)
+        const callee = child()
+        const args = Array.from({ length: c.variant }, () => child())
         return t.callExpression(callee, args)
       }
       case 'OptionalCallExpression': {
-        const callee = buildExpr(depth + 1).node
-        const args = Array.from({ length: c.variant }, () => buildExpr(depth + 1).node)
+        const callee = child()
+        const args = Array.from({ length: c.variant }, () => child())
         return t.optionalCallExpression(callee, args, false)
       }
       case 'NewExpression': {
-        const callee = buildExpr(depth + 1).node
-        const args = Array.from({ length: c.variant }, () => buildExpr(depth + 1).node)
+        const callee = child()
+        const args = Array.from({ length: c.variant }, () => child())
         return t.newExpression(callee, args)
       }
       case 'MemberExpression':
-        if (c.variant === 1) return t.memberExpression(buildExpr(depth + 1).node, buildExpr(depth + 1).node, true)
-        return t.memberExpression(buildExpr(depth + 1).node, t.identifier(cosmeticIdent()), false)
+        if (c.variant === 1)
+          return t.memberExpression(child(), child(), true)
+        return t.memberExpression(child(), t.identifier(cosmeticIdent()), false)
       case 'OptionalMemberExpression':
-        if (c.variant === 1) return t.optionalMemberExpression(buildExpr(depth + 1).node, buildExpr(depth + 1).node, true, false)
-        return t.optionalMemberExpression(buildExpr(depth + 1).node, t.identifier(cosmeticIdent()), false, false)
+        if (c.variant === 1)
+          return t.optionalMemberExpression(child(), child(), true, false)
+        return t.optionalMemberExpression(child(), t.identifier(cosmeticIdent()), false, false)
       case 'ArrayExpression':
-        return t.arrayExpression(Array.from({ length: c.variant }, () => buildExpr(depth + 1).node))
+        return t.arrayExpression(Array.from({ length: c.variant }, () => child()))
       case 'ObjectExpression': {
         const pairs = Array.from({ length: c.variant }, () => {
-          const k = buildExpr(depth + 1).node
-          const v = buildExpr(depth + 1).node
+          const k = child()
+          const v = child()
           const isc = !t.isIdentifier(k) && !t.isStringLiteral(k) && !t.isNumericLiteral(k)
           return t.objectProperty(k, v, isc)
         })
         return t.objectExpression(pairs)
       }
       case 'SequenceExpression':
-        return t.sequenceExpression(Array.from({ length: c.variant + 2 }, () => buildExpr(depth + 1).node))
+        return t.sequenceExpression(Array.from({ length: c.variant + 2 }, () => child()))
       case 'TemplateLiteral': {
-        const exprs = Array.from({ length: c.variant }, () => buildExpr(depth + 1).node)
+        const exprs = Array.from({ length: c.variant }, () => child())
         const quasis = Array.from({ length: c.variant + 1 }, (_, i) => {
           const raw = cosmeticString()
           return t.templateElement({ raw, cooked: raw }, i === c.variant)
@@ -176,8 +188,8 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         return t.templateLiteral(quasis, exprs)
       }
       case 'TaggedTemplateExpression': {
-        const tag = buildExpr(depth + 1).node
-        const exprs = Array.from({ length: c.variant }, () => buildExpr(depth + 1).node)
+        const tag = child()
+        const exprs = Array.from({ length: c.variant }, () => child())
         const quasis = Array.from({ length: c.variant + 1 }, (_, i) => {
           const raw = cosmeticString()
           return t.templateElement({ raw, cooked: raw }, i === c.variant)
@@ -186,29 +198,50 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
       }
       case 'ArrowFunctionExpression': {
         const paramNames = Array.from({ length: c.variant }, (_, i) => nameFromHash(hash, 900 + i))
-        const savedScope = [...ctx.scope]; const savedTyped = [...ctx.typedScope]; const savedFn = ctx.inFunction
-        for (const p of paramNames) { ctx.scope.push(p); ctx.typedScope.push({ name: p, type: 'any' }) }
+        if (cosmeticChildren) {
+          return t.arrowFunctionExpression(paramNames.map(n => t.identifier(n)), child())
+        }
+        const savedScope = [...ctx.scope]
+        const savedTyped = [...ctx.typedScope]
+        const savedFn = ctx.inFunction
+        for (const p of paramNames) {
+          ctx.scope.push(p)
+          ctx.typedScope.push({ name: p, type: 'any' })
+        }
         ctx.inFunction = true
         const body = buildExpr(depth + 1).node
-        ctx.scope = savedScope; ctx.typedScope = savedTyped; ctx.inFunction = savedFn
+        ctx.scope = savedScope
+        ctx.typedScope = savedTyped
+        ctx.inFunction = savedFn
         return t.arrowFunctionExpression(paramNames.map(n => t.identifier(n)), body)
       }
       case 'FunctionExpression': {
         const paramNames = Array.from({ length: c.variant }, (_, i) => nameFromHash(hash, 900 + i))
-        const savedScope = [...ctx.scope]; const savedTyped = [...ctx.typedScope]; const savedFn = ctx.inFunction
-        for (const p of paramNames) { ctx.scope.push(p); ctx.typedScope.push({ name: p, type: 'any' }) }
+        if (cosmeticChildren) {
+          return t.functionExpression(null, paramNames.map(n => t.identifier(n)), t.blockStatement([t.returnStatement(child())]))
+        }
+        const savedScope = [...ctx.scope]
+        const savedTyped = [...ctx.typedScope]
+        const savedFn = ctx.inFunction
+        for (const p of paramNames) {
+          ctx.scope.push(p)
+          ctx.typedScope.push({ name: p, type: 'any' })
+        }
         ctx.inFunction = true
         const body = buildExpr(depth + 1).node
-        ctx.scope = savedScope; ctx.typedScope = savedTyped; ctx.inFunction = savedFn
+        ctx.scope = savedScope
+        ctx.typedScope = savedTyped
+        ctx.inFunction = savedFn
         return t.functionExpression(null, paramNames.map(n => t.identifier(n)), t.blockStatement([t.returnStatement(body)]))
       }
       case 'SpreadElement':
-        return t.arrayExpression([t.spreadElement(buildExpr(depth + 1).node)])
+        return t.arrayExpression([t.spreadElement(child())])
       case 'ClassExpression':
-        if (c.variant === 1) return t.classExpression(null, buildExpr(depth + 1).node, t.classBody([]), [])
+        if (c.variant === 1)
+          return t.classExpression(null, child(), t.classBody([]), [])
         return t.classExpression(null, null, t.classBody([]), [])
       case 'AwaitExpression':
-        return t.awaitExpression(buildExpr(depth + 1).node)
+        return t.awaitExpression(child())
       default:
         return t.numericLiteral(0)
     }
@@ -218,7 +251,6 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
 
   function buildStatement(c: Candidate): t.Statement {
     switch (c.nodeType) {
-      case 'ExpressionStatement': return t.expressionStatement(buildExpr(0).node)
       case 'VariableDeclaration': {
         const kind = VAR_KINDS[c.variant]
         const name = nameFromHash(hash, ctx.scope.length)
@@ -236,23 +268,28 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
       }
       case 'WhileStatement': {
         const test = buildExpr(0).node
-        const savedLoop = ctx.inLoop; ctx.inLoop = true
+        const savedLoop = ctx.inLoop
+        ctx.inLoop = true
         const body = buildBlock()
         ctx.inLoop = savedLoop
         return t.whileStatement(test, t.blockStatement(body))
       }
       case 'ForStatement': {
-        const hasInit = (c.variant & 1) !== 0, hasTest = (c.variant & 2) !== 0, hasUpdate = (c.variant & 4) !== 0
+        const hasInit = (c.variant & 1) !== 0
+        const hasTest = (c.variant & 2) !== 0
+        const hasUpdate = (c.variant & 4) !== 0
         const init = hasInit ? buildExpr(0).node : null
         const test = hasTest ? buildExpr(0).node : null
         const update = hasUpdate ? buildExpr(0).node : null
-        const savedLoop = ctx.inLoop; ctx.inLoop = true
+        const savedLoop = ctx.inLoop
+        ctx.inLoop = true
         const body = buildBlock()
         ctx.inLoop = savedLoop
         return t.forStatement(init, test, update, t.blockStatement(body))
       }
       case 'DoWhileStatement': {
-        const savedLoop = ctx.inLoop; ctx.inLoop = true
+        const savedLoop = ctx.inLoop
+        ctx.inLoop = true
         const body = buildBlock()
         ctx.inLoop = savedLoop
         return t.doWhileStatement(buildExpr(0).node, t.blockStatement(body))
@@ -285,18 +322,21 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
   }
 
   function buildBlock(): t.Statement[] {
-    if (isPad()) return []
+    if (isPad())
+      return []
     const countByte = readByte()
     hash = mixHash(hash, countByte)
     ctx.blockDepth++
     const stmts: t.Statement[] = []
-    for (let i = 0; i < countByte; i++) stmts.push(buildTopLevel())
+    for (let i = 0; i < countByte; i++)
+      stmts.push(buildTopLevel())
     ctx.blockDepth--
     return stmts
   }
 
   function buildTopLevel(): t.Statement {
-    if (isPad()) return t.expressionStatement(padLeafExpr())
+    if (isPad())
+      return t.expressionStatement(padLeafExpr())
     const byte = readByte()
     const candidates = filterCandidates(ctx)
     const table = buildTable(candidates, hash)
@@ -306,6 +346,7 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
   }
 
   const body: t.Statement[] = []
-  while (cursor < prefixed.length) body.push(buildTopLevel())
+  while (cursor < prefixed.length)
+    body.push(buildTopLevel())
   return generateCompact(t.program(body))
 }

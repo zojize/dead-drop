@@ -1,35 +1,39 @@
-import { parse } from '@babel/parser'
 import type * as t from '@babel/types'
+import type { EncodingContext } from './context'
+import { parse } from '@babel/parser'
 import {
-  type EncodingContext,
-  initialContext,
-  filterCandidates,
-  buildTable,
+  ASSIGN_OPS,
+  BINARY_OPS,
   buildReverseTable,
+  buildTable,
+
+  filterCandidates,
+  inferTypeFromKey,
+  initialContext,
+  LOGICAL_OPS,
+  MAX_EXPR_DEPTH,
   mixHash,
   nameFromHash,
-  inferTypeFromKey,
-  BINARY_OPS,
-  LOGICAL_OPS,
+  REGEXP_FLAGS,
   UNARY_OPS,
-  UPDATE_OPS,
-  ASSIGN_OPS,
-  MAX_EXPR_DEPTH,
 } from './context'
 
 export interface DecodeOptions {
   maxExprDepth?: number
 }
 
-type WorkItem =
-  | { kind: 'expr'; node: t.Node; depth: number }
-  | { kind: 'stmt'; node: t.Node }
-  | { kind: 'block'; stmts: readonly t.Statement[] }
-  | { kind: 'block-depth-dec' }
-  | { kind: 'byte'; value: number }
-  | { kind: 'scope-save'; scope: string[]; typedScope: any[]; inFunction: boolean }
-  | { kind: 'scope-restore'; scope: string[]; typedScope: any[]; inFunction: boolean }
-  | { kind: 'var-decl'; name: string; initNode: t.Node; depth: number }
+type WorkItem
+  = | { kind: 'expr', node: t.Node, depth: number }
+    | { kind: 'stmt', node: t.Node }
+    | { kind: 'block', stmts: readonly t.Statement[] }
+    | { kind: 'block-depth-dec' }
+    | { kind: 'byte', value: number }
+    | { kind: 'scope-save', scope: string[], typedScope: any[], inFunction: boolean }
+    | { kind: 'scope-restore', scope: string[], typedScope: any[], inFunction: boolean }
+    | { kind: 'var-decl', name: string, initNode: t.Node, depth: number }
+    | { kind: 'inloop-enter' }
+    | { kind: 'inloop-exit', saved: boolean }
+    | { kind: 'var-type-push', name: string, type: string }
 
 export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
   const ast = parse(jsSource, {
@@ -51,7 +55,15 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
       case 'BooleanLiteral': return `BooleanLiteral:${node.value ? 1 : 0}`
       case 'NullLiteral': return 'NullLiteral:0'
       case 'ThisExpression': return 'ThisExpression:0'
-      case 'RegExpLiteral': return 'RegExpLiteral:0'
+      case 'RegExpLiteral': {
+        let bitmask = 0
+        const flags = (node as t.RegExpLiteral).flags
+        for (let i = 0; i < REGEXP_FLAGS.length; i++) {
+          if (flags.includes(REGEXP_FLAGS[i]))
+            bitmask |= (1 << i)
+        }
+        return `RegExpLiteral:${bitmask}`
+      }
       case 'BinaryExpression': return `BinaryExpression:${(BINARY_OPS as readonly string[]).indexOf(node.operator)}`
       case 'LogicalExpression': return `LogicalExpression:${(LOGICAL_OPS as readonly string[]).indexOf(node.operator)}`
       case 'AssignmentExpression': return `AssignmentExpression:${(ASSIGN_OPS as readonly string[]).indexOf(node.operator)}`
@@ -64,7 +76,8 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
       case 'MemberExpression': return `MemberExpression:${node.computed ? 1 : 0}`
       case 'OptionalMemberExpression': return `OptionalMemberExpression:${node.computed ? 1 : 0}`
       case 'ArrayExpression': {
-        if (node.elements.length === 1 && node.elements[0]?.type === 'SpreadElement') return 'SpreadElement:0'
+        if (node.elements.length === 1 && node.elements[0]?.type === 'SpreadElement')
+          return 'SpreadElement:0'
         return `ArrayExpression:${node.elements.length}`
       }
       case 'ObjectExpression': return `ObjectExpression:${node.properties.length}`
@@ -81,7 +94,6 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
 
   function stmtKey(node: t.Node): string {
     switch (node.type) {
-      case 'ExpressionStatement': return 'ExpressionStatement:0'
       case 'VariableDeclaration': return `VariableDeclaration:${node.kind === 'var' ? 0 : node.kind === 'let' ? 1 : 2}`
       case 'IfStatement': return `IfStatement:${(node as t.IfStatement).alternate ? 0 : 1}`
       case 'WhileStatement': return 'WhileStatement:0'
@@ -143,7 +155,8 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
       case 'MemberExpression':
       case 'OptionalMemberExpression': {
         const n = node as t.MemberExpression
-        if (n.computed) work.push({ kind: 'expr', node: n.property, depth: d })
+        if (n.computed)
+          work.push({ kind: 'expr', node: n.property, depth: d })
         work.push({ kind: 'expr', node: n.object, depth: d })
         break
       }
@@ -151,8 +164,12 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         const n = node as t.ArrayExpression
         if (n.elements.length === 1 && n.elements[0]?.type === 'SpreadElement') {
           work.push({ kind: 'expr', node: (n.elements[0] as t.SpreadElement).argument, depth: d })
-        } else {
-          for (let i = n.elements.length - 1; i >= 0; i--) if (n.elements[i]) work.push({ kind: 'expr', node: n.elements[i]!, depth: d })
+        }
+        else {
+          for (let i = n.elements.length - 1; i >= 0; i--) {
+            if (n.elements[i])
+              work.push({ kind: 'expr', node: n.elements[i]!, depth: d })
+          }
         }
         break
       }
@@ -185,7 +202,8 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         const bodyNode = n.body.type === 'BlockStatement'
           ? ((n.body as t.BlockStatement).body[0] as t.ReturnStatement)?.argument
           : n.body
-        if (bodyNode) work.push({ kind: 'expr', node: bodyNode, depth: d })
+        if (bodyNode)
+          work.push({ kind: 'expr', node: bodyNode, depth: d })
         // Push scope-save AFTER body (LIFO: save executes first)
         work.push({ kind: 'scope-save', scope: params, typedScope: params.map(p => ({ name: p, type: 'any' })), inFunction: true })
         break
@@ -195,12 +213,14 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         const params = n.params.map((_, i) => nameFromHash(hash, 900 + i))
         work.push({ kind: 'scope-restore', scope: [...ctx.scope], typedScope: [...ctx.typedScope], inFunction: ctx.inFunction })
         const ret = n.body.body[0]
-        if (ret?.type === 'ReturnStatement') work.push({ kind: 'expr', node: (ret as t.ReturnStatement).argument!, depth: d })
+        if (ret?.type === 'ReturnStatement')
+          work.push({ kind: 'expr', node: (ret as t.ReturnStatement).argument!, depth: d })
         work.push({ kind: 'scope-save', scope: params, typedScope: params.map(p => ({ name: p, type: 'any' })), inFunction: true })
         break
       }
       case 'ClassExpression':
-        if ((node as t.ClassExpression).superClass) work.push({ kind: 'expr', node: (node as t.ClassExpression).superClass!, depth: d })
+        if ((node as t.ClassExpression).superClass)
+          work.push({ kind: 'expr', node: (node as t.ClassExpression).superClass!, depth: d })
         break
       case 'AwaitExpression':
         work.push({ kind: 'expr', node: (node as t.AwaitExpression).argument, depth: d })
@@ -211,17 +231,12 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
 
   // ─── Push statement children ───────────────────────────────────────
 
-  function pushStmtChildren(node: t.Node, byte: number | undefined, table: any[]): void {
+  function pushStmtChildren(node: t.Node): void {
     switch (node.type) {
-      case 'ExpressionStatement': {
-        const entry = byte !== undefined ? table[byte] : null
-        if (entry && entry.isStatement) {
-          work.push({ kind: 'expr', node: (node as t.ExpressionStatement).expression, depth: 0 })
-        } else {
-          pushExprChildren((node as t.ExpressionStatement).expression, 0)
-        }
+      case 'ExpressionStatement':
+        // Expression was directly selected as a candidate in statement context
+        pushExprChildren((node as t.ExpressionStatement).expression, 0)
         break
-      }
       case 'VariableDeclaration': {
         const n = node as t.VariableDeclaration
         const name = nameFromHash(hash, ctx.scope.length)
@@ -231,35 +246,42 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
       }
       case 'IfStatement': {
         const n = node as t.IfStatement
-        if (n.alternate) work.push({ kind: 'block', stmts: (n.alternate as t.BlockStatement).body })
+        if (n.alternate)
+          work.push({ kind: 'block', stmts: (n.alternate as t.BlockStatement).body })
         work.push({ kind: 'block', stmts: (n.consequent as t.BlockStatement).body })
         work.push({ kind: 'expr', node: n.test, depth: 0 })
         break
       }
       case 'WhileStatement': {
         const n = node as t.WhileStatement
-        const saved = ctx.inLoop; ctx.inLoop = true
+        // LIFO order: test → inloop-enter → block → inloop-exit
+        work.push({ kind: 'inloop-exit', saved: ctx.inLoop })
         work.push({ kind: 'block', stmts: (n.body as t.BlockStatement).body })
-        ctx.inLoop = saved
+        work.push({ kind: 'inloop-enter' })
         work.push({ kind: 'expr', node: n.test, depth: 0 })
         break
       }
       case 'ForStatement': {
         const n = node as t.ForStatement
-        const saved = ctx.inLoop; ctx.inLoop = true
+        // LIFO order: init → test → update → inloop-enter → block → inloop-exit
+        work.push({ kind: 'inloop-exit', saved: ctx.inLoop })
         work.push({ kind: 'block', stmts: (n.body as t.BlockStatement).body })
-        ctx.inLoop = saved
-        if (n.update) work.push({ kind: 'expr', node: n.update, depth: 0 })
-        if (n.test) work.push({ kind: 'expr', node: n.test, depth: 0 })
-        if (n.init) work.push({ kind: 'expr', node: n.init as t.Expression, depth: 0 })
+        work.push({ kind: 'inloop-enter' })
+        if (n.update)
+          work.push({ kind: 'expr', node: n.update, depth: 0 })
+        if (n.test)
+          work.push({ kind: 'expr', node: n.test, depth: 0 })
+        if (n.init)
+          work.push({ kind: 'expr', node: n.init as t.Expression, depth: 0 })
         break
       }
       case 'DoWhileStatement': {
         const n = node as t.DoWhileStatement
+        // LIFO order: inloop-enter → block → inloop-exit → test
         work.push({ kind: 'expr', node: n.test, depth: 0 })
-        const saved = ctx.inLoop; ctx.inLoop = true
+        work.push({ kind: 'inloop-exit', saved: ctx.inLoop })
         work.push({ kind: 'block', stmts: (n.body as t.BlockStatement).body })
-        ctx.inLoop = saved
+        work.push({ kind: 'inloop-enter' })
         break
       }
       case 'BlockStatement':
@@ -275,7 +297,8 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         const n = node as t.SwitchStatement
         for (let i = n.cases.length - 1; i >= 0; i--) {
           work.push({ kind: 'block', stmts: n.cases[i].consequent })
-          if (n.cases[i].test) work.push({ kind: 'expr', node: n.cases[i].test!, depth: 0 })
+          if (n.cases[i].test)
+            work.push({ kind: 'expr', node: n.cases[i].test!, depth: 0 })
         }
         work.push({ kind: 'expr', node: n.discriminant, depth: 0 })
         break
@@ -287,7 +310,8 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         work.push({ kind: 'expr', node: (node as t.ThrowStatement).argument, depth: 0 })
         break
       case 'ReturnStatement':
-        if ((node as t.ReturnStatement).argument) work.push({ kind: 'expr', node: (node as t.ReturnStatement).argument!, depth: 0 })
+        if ((node as t.ReturnStatement).argument)
+          work.push({ kind: 'expr', node: (node as t.ReturnStatement).argument!, depth: 0 })
         break
     }
   }
@@ -309,9 +333,18 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         const rev = buildReverseTable(table)
         const key = exprKey(item.node)
         const byte = rev.get(key)
-        if (byte !== undefined) { bytes.push(byte); hash = mixHash(hash, byte) }
-        else { bytes.push(0); hash = mixHash(hash, 0) }
-        pushExprChildren(item.node, item.depth)
+        if (byte !== undefined) {
+          bytes.push(byte)
+          hash = mixHash(hash, byte)
+        }
+        else {
+          bytes.push(0)
+          hash = mixHash(hash, 0)
+        }
+        // At max depth, children are cosmetic — don't recurse
+        if (ctx.maxExprDepth === Infinity || item.depth < ctx.maxExprDepth) {
+          pushExprChildren(item.node, item.depth)
+        }
         break
       }
 
@@ -319,20 +352,22 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         const candidates = filterCandidates(ctx)
         const table = buildTable(candidates, hash)
         const rev = buildReverseTable(table)
-        let key: string
-        let byte: number | undefined
-        if (item.node.type === 'ExpressionStatement') {
-          const innerKey = exprKey((item.node as t.ExpressionStatement).expression)
-          byte = rev.get(innerKey)
-          if (byte === undefined) byte = rev.get(stmtKey(item.node))
-          key = byte !== undefined ? (rev.has(innerKey) ? innerKey : stmtKey(item.node)) : stmtKey(item.node)
-        } else {
-          key = stmtKey(item.node)
-          byte = rev.get(key)
+        // ExpressionStatement: always use the inner expression's key
+        // (ExpressionStatement:0 is not a candidate — expression candidates
+        // in statement context are wrapped in ExpressionStatement automatically)
+        const key = item.node.type === 'ExpressionStatement'
+          ? exprKey((item.node as t.ExpressionStatement).expression)
+          : stmtKey(item.node)
+        const byte = rev.get(key)
+        if (byte !== undefined) {
+          bytes.push(byte)
+          hash = mixHash(hash, byte)
         }
-        if (byte !== undefined) { bytes.push(byte); hash = mixHash(hash, byte) }
-        else { bytes.push(0); hash = mixHash(hash, 0) }
-        pushStmtChildren(item.node, byte, table)
+        else {
+          bytes.push(0)
+          hash = mixHash(hash, 0)
+        }
+        pushStmtChildren(item.node)
         break
       }
 
@@ -348,6 +383,18 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
 
       case 'block-depth-dec':
         ctx.blockDepth--
+        break
+
+      case 'inloop-enter':
+        ctx.inLoop = true
+        break
+
+      case 'inloop-exit':
+        ctx.inLoop = item.saved
+        break
+
+      case 'var-type-push':
+        ctx.typedScope.push({ name: item.name, type: item.type as any })
         break
 
       case 'byte':
@@ -374,17 +421,28 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         const rev = buildReverseTable(table)
         const key = exprKey(item.initNode)
         const byte = rev.get(key)
-        if (byte !== undefined) { bytes.push(byte); hash = mixHash(hash, byte) }
-        else { bytes.push(0); hash = mixHash(hash, 0) }
+        if (byte !== undefined) {
+          bytes.push(byte)
+          hash = mixHash(hash, byte)
+        }
+        else {
+          bytes.push(0)
+          hash = mixHash(hash, 0)
+        }
+        // Defer typed scope push: children must see scope BEFORE this variable's type
+        // (matches encoder which builds children before updating typedScope)
         const inferredType = inferTypeFromKey(key)
-        ctx.typedScope.push({ name: item.name, type: inferredType })
-        pushExprChildren(item.initNode, item.depth)
+        work.push({ kind: 'var-type-push', name: item.name, type: inferredType })
+        if (ctx.maxExprDepth === Infinity || item.depth < ctx.maxExprDepth) {
+          pushExprChildren(item.initNode, item.depth)
+        }
         break
       }
     }
   }
 
-  if (bytes.length < 4) return new Uint8Array(0)
+  if (bytes.length < 4)
+    return new Uint8Array(0)
   const payloadLength = ((bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3]) >>> 0
   return new Uint8Array(bytes.slice(4, 4 + payloadLength))
 }
