@@ -21,6 +21,7 @@ import {
 
 export interface EncodeOptions {
   seed?: number
+  maxExprDepth?: number
 }
 
 function createRng(seed: number) {
@@ -49,7 +50,7 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
   let cursor = 0
   let hash = 0xDEADD
   const rng = createRng(opts.seed ?? length)
-  const ctx: EncodingContext = initialContext()
+  const ctx: EncodingContext = { ...initialContext(), maxExprDepth: opts.maxExprDepth ?? MAX_EXPR_DEPTH }
   const isPad = () => cursor >= prefixed.length
 
   function readByte(): number { return prefixed[cursor++] }
