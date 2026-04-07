@@ -33,13 +33,17 @@ export interface ScopeEntry {
   type: ScopeType
 }
 
+/** Max expression nesting depth before forcing leaf-only candidates. */
+export const MAX_EXPR_DEPTH = Infinity // disabled by default — configurable via factory
+
 export interface EncodingContext {
   inFunction: boolean
   inAsync: boolean
   inLoop: boolean
-  scope: string[]        // declared variable names
-  typedScope: ScopeEntry[] // declared variable names with inferred types
+  scope: string[]
+  typedScope: ScopeEntry[]
   expressionOnly: boolean
+  exprDepth: number
 }
 
 export function initialContext(): EncodingContext {
@@ -50,6 +54,7 @@ export function initialContext(): EncodingContext {
     scope: [],
     typedScope: [],
     expressionOnly: false,
+    exprDepth: 0,
   }
 }
 
@@ -130,17 +135,17 @@ function buildAllCandidates(): Candidate[] {
   // ── Expression candidates (always available in expression context) ──
 
   // Leaves (weight 4 — compact, realistic)
-  c.push({ key: 'NumericLiteral:0', nodeType: 'NumericLiteral', variant: 0, children: [], weight: 4, isStatement: false })
-  c.push({ key: 'StringLiteral:0', nodeType: 'StringLiteral', variant: 0, children: [], weight: 4, isStatement: false })
-  c.push({ key: 'Identifier:0', nodeType: 'Identifier', variant: 0, children: [], weight: 4, isStatement: false })
-  c.push({ key: 'BooleanLiteral:1', nodeType: 'BooleanLiteral', variant: 1, children: [], weight: 4, isStatement: false })
-  c.push({ key: 'BooleanLiteral:0', nodeType: 'BooleanLiteral', variant: 0, children: [], weight: 4, isStatement: false })
-  c.push({ key: 'NullLiteral:0', nodeType: 'NullLiteral', variant: 0, children: [], weight: 4, isStatement: false })
-  c.push({ key: 'BigIntLiteral:0', nodeType: 'BigIntLiteral', variant: 0, children: [], weight: 3, isStatement: false })
-  c.push({ key: 'ThisExpression:0', nodeType: 'ThisExpression', variant: 0, children: [], weight: 3, isStatement: false })
+  c.push({ key: 'NumericLiteral:0', nodeType: 'NumericLiteral', variant: 0, children: [], weight: 8, isStatement: false })
+  c.push({ key: 'StringLiteral:0', nodeType: 'StringLiteral', variant: 0, children: [], weight: 8, isStatement: false })
+  c.push({ key: 'Identifier:0', nodeType: 'Identifier', variant: 0, children: [], weight: 8, isStatement: false })
+  c.push({ key: 'BooleanLiteral:1', nodeType: 'BooleanLiteral', variant: 1, children: [], weight: 8, isStatement: false })
+  c.push({ key: 'BooleanLiteral:0', nodeType: 'BooleanLiteral', variant: 0, children: [], weight: 8, isStatement: false })
+  c.push({ key: 'NullLiteral:0', nodeType: 'NullLiteral', variant: 0, children: [], weight: 8, isStatement: false })
+  c.push({ key: 'BigIntLiteral:0', nodeType: 'BigIntLiteral', variant: 0, children: [], weight: 6, isStatement: false })
+  c.push({ key: 'ThisExpression:0', nodeType: 'ThisExpression', variant: 0, children: [], weight: 6, isStatement: false })
 
   // RegExpLiteral — single leaf entry (flags are cosmetic, randomized by encoder)
-  c.push({ key: 'RegExpLiteral:0', nodeType: 'RegExpLiteral', variant: 0, children: [], weight: 3, isStatement: false })
+  c.push({ key: 'RegExpLiteral:0', nodeType: 'RegExpLiteral', variant: 0, children: [], weight: 6, isStatement: false })
 
   // Binary operators (weight 1, 2 children)
   for (let i = 0; i < BINARY_OPS.length; i++) {
@@ -314,7 +319,12 @@ export function filterCandidates(ctx: EncodingContext): Candidate[] {
   const hasMemberSafe = scopeHasType(ctx.typedScope, MEMBER_SAFE_TYPES)
   const hasAnyScope = ctx.typedScope.length > 0
 
+  const forceLeaf = ctx.exprDepth >= MAX_EXPR_DEPTH
+
   return ALL_CANDIDATES.filter(c => {
+    // At max expression depth, only allow leaf expressions (no children)
+    if (forceLeaf && c.children.length > 0) return false
+
     // Expression-only context: only expressions
     if (ctx.expressionOnly && c.isStatement) return false
 
