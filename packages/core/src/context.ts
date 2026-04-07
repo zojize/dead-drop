@@ -321,12 +321,7 @@ export function filterCandidates(ctx: EncodingContext): Candidate[] {
   const hasMemberSafe = scopeHasType(ctx.typedScope, MEMBER_SAFE_TYPES)
   const hasAnyScope = ctx.typedScope.length > 0
 
-  const forceLeaf = ctx.exprDepth >= ctx.maxExprDepth
-
   return ALL_CANDIDATES.filter(c => {
-    // At max expression depth, only allow leaf expressions (no children)
-    if (forceLeaf && c.children.length > 0) return false
-
     // Expression-only context: only expressions
     if (ctx.expressionOnly && c.isStatement) return false
 
@@ -361,12 +356,27 @@ export function filterCandidates(ctx: EncodingContext): Candidate[] {
 
     return true
   }).map(c => {
+    let w = c.weight
+
     // Dynamic weight: Identifier gets heavier with more scope entries
-    // (more declared vars → more realistic to reference them)
     if (c.nodeType === 'Identifier' && ctx.typedScope.length > 0) {
-      return { ...c, weight: c.weight + ctx.typedScope.length * 0.5 }
+      w += ctx.typedScope.length * 0.5
     }
-    return c
+
+    // Depth-based weight scaling: as depth approaches maxExprDepth,
+    // heavily bias toward leaves to keep AST shallow
+    if (ctx.exprDepth > 0 && ctx.maxExprDepth < Infinity) {
+      const depthRatio = ctx.exprDepth / ctx.maxExprDepth // 0..1+
+      if (c.children.length === 0) {
+        // Leaves get exponentially heavier near the limit
+        w *= 1 + depthRatio * 20
+      } else {
+        // Non-leaves get exponentially lighter
+        w *= Math.max(0.01, 1 - depthRatio * 0.9)
+      }
+    }
+
+    return w !== c.weight ? { ...c, weight: w } : c
   })
 }
 

@@ -339,3 +339,66 @@ describe('runtime safety (eval)', () => {
     }
   })
 })
+
+describe('maxExprDepth', () => {
+  it('round-trips with depth 10', () => {
+    for (let i = 0; i < 50; i++) {
+      const len = Math.floor(Math.random() * 20) + 1
+      const data = new Uint8Array(len)
+      crypto.getRandomValues(data)
+      const js = encode(data, { maxExprDepth: 10 })
+      const out = decode(js, { maxExprDepth: 10 })
+      expect(Array.from(out)).toEqual(Array.from(data))
+    }
+  })
+
+  it('round-trips with depth 20', () => {
+    for (let i = 0; i < 50; i++) {
+      const len = Math.floor(Math.random() * 30) + 1
+      const data = new Uint8Array(len)
+      crypto.getRandomValues(data)
+      const js = encode(data, { maxExprDepth: 20 })
+      const out = decode(js, { maxExprDepth: 20 })
+      expect(Array.from(out)).toEqual(Array.from(data))
+    }
+  })
+
+  it('round-trips with depth 50', () => {
+    for (let i = 0; i < 50; i++) {
+      const len = Math.floor(Math.random() * 50) + 1
+      const data = new Uint8Array(len)
+      crypto.getRandomValues(data)
+      const js = encode(data, { maxExprDepth: 50 })
+      const out = decode(js, { maxExprDepth: 50 })
+      expect(Array.from(out)).toEqual(Array.from(data))
+    }
+  })
+
+  it('single byte — all 256 values with depth 10', () => {
+    for (let b = 0; b < 256; b++) {
+      const data = new Uint8Array([b])
+      const js = encode(data, { maxExprDepth: 10 })
+      const out = decode(js, { maxExprDepth: 10 })
+      expect(Array.from(out)).toEqual(Array.from(data))
+    }
+  })
+
+  it('depth-limited output evals without error', () => {
+    for (let i = 0; i < 50; i++) {
+      const len = Math.floor(Math.random() * 20) + 1
+      const data = new Uint8Array(len)
+      crypto.getRandomValues(data)
+      const js = encode(data, { maxExprDepth: 15 })
+      expect(() => eval(js)).not.toThrow()
+    }
+  })
+
+  it('different depths produce different output for same input', () => {
+    const msg = new TextEncoder().encode('hello')
+    const outputs = new Set<string>()
+    for (const d of [5, 10, 15, 20, 50]) {
+      outputs.add(encode(msg, { maxExprDepth: d }))
+    }
+    expect(outputs.size).toBeGreaterThanOrEqual(2)
+  })
+})
