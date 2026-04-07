@@ -284,16 +284,15 @@ describe('data lives in AST structure, not literal values', () => {
 })
 
 describe('encode output validity', () => {
-  it('produces parseable JavaScript (with errorRecovery)', () => {
+  it('produces strictly parseable JavaScript (no errorRecovery needed)', () => {
     const msgs = [
       new Uint8Array([]),
       new TextEncoder().encode('test'),
-      Uint8Array.from({ length: 50 }, (_, i) => i),
+      new TextEncoder().encode('hello world'),
     ]
     for (const msg of msgs) {
       const js = encode(msg)
-      const ast = parse(js, { allowReturnOutsideFunction: true, errorRecovery: true })
-      expect(ast.program.body.length).toBeGreaterThan(0)
+      expect(() => parse(js)).not.toThrow()
     }
   })
 
@@ -303,6 +302,40 @@ describe('encode output validity', () => {
       const js = encode(data)
       const decoded = decode(js)
       expect(decoded.length).toBe(len)
+    }
+  })
+})
+
+describe('runtime safety (eval)', () => {
+  it('single byte — all 256 values eval without error', () => {
+    for (let b = 0; b < 256; b++) {
+      const js = encode(new Uint8Array([b]))
+      expect(() => eval(js)).not.toThrow()
+    }
+  })
+
+  it('fuzz: random payloads eval without error (100 iterations)', () => {
+    for (let i = 0; i < 100; i++) {
+      const len = Math.floor(Math.random() * 20) + 1
+      const data = new Uint8Array(len)
+      crypto.getRandomValues(data)
+      const js = encode(data)
+      expect(() => eval(js)).not.toThrow()
+    }
+  })
+
+  it('fuzz: random seeds eval without error', () => {
+    const msg = new TextEncoder().encode('runtime safety test')
+    for (let seed = 0; seed < 50; seed++) {
+      const js = encode(msg, { seed })
+      expect(() => eval(js)).not.toThrow()
+    }
+  })
+
+  it('adversarial: repeated bytes eval without error', () => {
+    for (let b = 0; b < 256; b++) {
+      const js = encode(new Uint8Array(5).fill(b))
+      expect(() => eval(js)).not.toThrow()
     }
   })
 })

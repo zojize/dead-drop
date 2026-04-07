@@ -2,6 +2,7 @@ import * as t from '@babel/types'
 import { generateCompact } from './codegen'
 import {
   type Candidate,
+  type ScopeEntry,
   type EncodingContext,
   initialContext,
   filterCandidates,
@@ -9,6 +10,7 @@ import {
   mixHash,
   nameFromHash,
   labelFromHash,
+  inferTypeFromKey,
   BINARY_OPS,
   LOGICAL_OPS,
   UNARY_OPS,
@@ -31,13 +33,17 @@ function createRng(seed: number) {
   }
 }
 
-const COSMETIC_IDENTS = ['x', 'y', 'z', 'w', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
+// Safe globals that always exist and never throw when read
+const SAFE_IDENTS = ['undefined', 'NaN', 'Infinity', 'globalThis', 'Object', 'Array', 'String', 'Number', 'Boolean', 'Math', 'JSON', 'Date']
 const VAR_KINDS = ['var', 'let', 'const'] as const
 
 type Slot<T> = { value: T }
+type ScopeSnapshot = { scope: string[]; typedScope: ScopeEntry[]; inFunction: boolean }
 type WorkItem =
   | { kind: 'expr'; slot: Slot<t.Expression> }
   | { kind: 'assemble'; fn: () => void }
+  | { kind: 'scope-save'; snapshot: ScopeSnapshot }
+  | { kind: 'scope-restore'; snapshot: ScopeSnapshot }
 
 export function encode(message: Uint8Array, options?: EncodeOptions): string {
   const opts = options ?? {}
@@ -58,11 +64,12 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
   function readByte(): number { return prefixed[cursor++] }
 
   function cosmeticIdent(): string {
-    // Prefer scope variables if available
-    if (ctx.scope.length > 0 && rng() % 3 === 0) {
+    // Prefer scope variables if available (always safe — declared)
+    if (ctx.scope.length > 0) {
       return ctx.scope[rng() % ctx.scope.length]
     }
-    return COSMETIC_IDENTS[rng() % COSMETIC_IDENTS.length]
+    // Fall back to safe globals that always exist
+    return SAFE_IDENTS[rng() % SAFE_IDENTS.length]
   }
   function cosmeticNumber(): number { return rng() % 1000 }
   function cosmeticString(): string {
@@ -89,12 +96,14 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
 
   function padLeafExpr(): t.Expression {
     const r = rng()
-    switch (r % 5) {
+    // Only use identifiers when scope has declared variables
+    const choices = ctx.scope.length > 0 ? 5 : 4
+    switch (r % choices) {
       case 0: return t.numericLiteral(cosmeticNumber())
-      case 1: return t.identifier(cosmeticIdent())
-      case 2: return t.stringLiteral(cosmeticString())
-      case 3: return t.booleanLiteral(rng() % 2 === 0)
-      default: return t.nullLiteral()
+      case 1: return t.stringLiteral(cosmeticString())
+      case 2: return t.booleanLiteral(rng() % 2 === 0)
+      case 3: return t.nullLiteral()
+      default: return t.identifier(ctx.scope[rng() % ctx.scope.length])
     }
   }
 
@@ -107,7 +116,7 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
       case 'NullLiteral': s.value = t.nullLiteral(); break
       case 'BigIntLiteral': s.value = t.bigIntLiteral(String(cosmeticNumber())); break
       case 'ThisExpression': s.value = t.thisExpression(); break
-      case 'RegExpLiteral': s.value = t.regExpLiteral('x', flagsString(c.variant)); break
+      case 'RegExpLiteral': s.value = t.regExpLiteral(cosmeticString(), flagsString(rng() % 64)); break
       case 'BinaryExpression': {
         const l = slot<t.Expression>(), r = slot<t.Expression>()
         pushAssemble(() => { s.value = t.binaryExpression(BINARY_OPS[c.variant] as any, l.value, r.value) })
@@ -122,7 +131,8 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
       }
       case 'AssignmentExpression': {
         const rhs = slot<t.Expression>()
-        const lhs = ctx.scope.length > 0 ? ctx.scope[rng() % ctx.scope.length] : cosmeticIdent()
+        // filterCandidates guarantees scope has entries when this candidate is available
+        const lhs = ctx.scope[rng() % ctx.scope.length]
         pushAssemble(() => { s.value = t.assignmentExpression(ASSIGN_OPS[c.variant] as any, t.identifier(lhs), rhs.value) })
         pushExpr(rhs)
         break
@@ -136,8 +146,10 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
       case 'UpdateExpression': {
         const op = UPDATE_OPS[Math.floor(c.variant / 2)]
         const prefix = c.variant % 2 === 0
-        // Operand must be an LVal — use cosmetic identifier (no data child)
-        s.value = t.updateExpression(op as any, t.identifier(cosmeticIdent()), prefix)
+        // Operand must be an LVal — use a declared scope variable
+        // filterCandidates guarantees scope has entries when this candidate is available
+        const operand = ctx.scope[rng() % ctx.scope.length]
+        s.value = t.updateExpression(op as any, t.identifier(operand), prefix)
         break
       }
       case 'ConditionalExpression': {
@@ -158,6 +170,14 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         const callee = slot<t.Expression>()
         const args = Array.from({ length: c.variant }, () => slot<t.Expression>())
         pushAssemble(() => { s.value = t.newExpression(callee.value, args.map(a => a.value)) })
+        for (let i = args.length - 1; i >= 0; i--) pushExpr(args[i])
+        pushExpr(callee)
+        break
+      }
+      case 'OptionalCallExpression': {
+        const callee = slot<t.Expression>()
+        const args = Array.from({ length: c.variant }, () => slot<t.Expression>())
+        pushAssemble(() => { s.value = t.optionalCallExpression(callee.value, args.map(a => a.value), false) })
         for (let i = args.length - 1; i >= 0; i--) pushExpr(args[i])
         pushExpr(callee)
         break
@@ -241,21 +261,28 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         break
       }
       case 'ArrowFunctionExpression': {
+        const paramNames = Array.from({ length: c.variant }, (_, i) => nameFromHash(hash, 900 + i))
+        const snap: ScopeSnapshot = { scope: [...ctx.scope], typedScope: [...ctx.typedScope], inFunction: ctx.inFunction }
         const body = slot<t.Expression>()
+        // Push in reverse (LIFO): restore → body → save+setup → assemble
         pushAssemble(() => {
-          const params = Array.from({ length: c.variant }, (_, i) => t.identifier(`_p${i}`))
-          s.value = t.arrowFunctionExpression(params, body.value)
+          s.value = t.arrowFunctionExpression(paramNames.map(n => t.identifier(n)), body.value)
         })
+        work.push({ kind: 'scope-restore', snapshot: snap })
         pushExpr(body)
+        work.push({ kind: 'scope-save', snapshot: { scope: paramNames, typedScope: paramNames.map(n => ({ name: n, type: 'any' as const })), inFunction: true } })
         break
       }
       case 'FunctionExpression': {
+        const paramNames = Array.from({ length: c.variant }, (_, i) => nameFromHash(hash, 900 + i))
+        const snap: ScopeSnapshot = { scope: [...ctx.scope], typedScope: [...ctx.typedScope], inFunction: ctx.inFunction }
         const body = slot<t.Expression>()
         pushAssemble(() => {
-          const params = Array.from({ length: c.variant }, (_, i) => t.identifier(`_p${i}`))
-          s.value = t.functionExpression(null, params, t.blockStatement([t.returnStatement(body.value)]))
+          s.value = t.functionExpression(null, paramNames.map(n => t.identifier(n)), t.blockStatement([t.returnStatement(body.value)]))
         })
+        work.push({ kind: 'scope-restore', snapshot: snap })
         pushExpr(body)
+        work.push({ kind: 'scope-save', snapshot: { scope: paramNames, typedScope: paramNames.map(n => ({ name: n, type: 'any' as const })), inFunction: true } })
         break
       }
       case 'SpreadElement': {
@@ -285,8 +312,9 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
     }
   }
 
-  function scheduleExpr(s: Slot<t.Expression>): void {
-    if (isPad()) { s.value = padLeafExpr(); return }
+  /** Schedule expression building. Returns the candidate used (null for padding). */
+  function scheduleExpr(s: Slot<t.Expression>): Candidate | null {
+    if (isPad()) { s.value = padLeafExpr(); return null }
 
     const byte = readByte()
     const exprCtx = { ...ctx, expressionOnly: true }
@@ -296,6 +324,7 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
 
     hash = mixHash(hash, byte)
     buildExprFromCandidate(c, s)
+    return c
   }
 
   function drain(): void {
@@ -304,6 +333,22 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
       switch (item.kind) {
         case 'expr': scheduleExpr(item.slot); break
         case 'assemble': item.fn(); break
+        case 'scope-save': {
+          // Push params into scope, set inFunction
+          const s = item.snapshot
+          for (const p of s.scope) ctx.scope.push(p)
+          for (const e of s.typedScope) ctx.typedScope.push(e)
+          ctx.inFunction = s.inFunction
+          break
+        }
+        case 'scope-restore': {
+          // Restore scope from snapshot
+          const s = item.snapshot
+          ctx.scope = s.scope
+          ctx.typedScope = s.typedScope
+          ctx.inFunction = s.inFunction
+          break
+        }
       }
     }
   }
@@ -323,8 +368,11 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         const name = nameFromHash(hash, ctx.scope.length)
         ctx.scope.push(name)
         const init = slot<t.Expression>()
-        pushExpr(init)
+        const initCandidate = scheduleExpr(init)
         drain()
+        // Infer type from init candidate and track in typedScope
+        const inferredType = initCandidate ? inferTypeFromKey(initCandidate.key) : 'any' as const
+        ctx.typedScope.push({ name, type: inferredType })
         return t.variableDeclaration(kind, [t.variableDeclarator(t.identifier(name), init.value)])
       }
       case 'IfStatement': {

@@ -9,12 +9,12 @@ import {
   buildReverseTable,
   mixHash,
   nameFromHash,
+  inferTypeFromKey,
   BINARY_OPS,
   LOGICAL_OPS,
   UNARY_OPS,
   UPDATE_OPS,
   ASSIGN_OPS,
-  REGEXP_FLAGS,
 } from './context'
 
 /**
@@ -43,14 +43,7 @@ export function decode(jsSource: string): Uint8Array {
       case 'NullLiteral': return 'NullLiteral:0'
       case 'BigIntLiteral': return 'BigIntLiteral:0'
       case 'ThisExpression': return 'ThisExpression:0'
-      case 'RegExpLiteral': {
-        let bitmask = 0
-        const flags = node.flags || ''
-        for (let i = 0; i < REGEXP_FLAGS.length; i++) {
-          if (flags.includes(REGEXP_FLAGS[i])) bitmask |= (1 << i)
-        }
-        return `RegExpLiteral:${bitmask}`
-      }
+      case 'RegExpLiteral': return 'RegExpLiteral:0' // flags are cosmetic
       case 'BinaryExpression': {
         const idx = (BINARY_OPS as readonly string[]).indexOf(node.operator)
         return `BinaryExpression:${idx}`
@@ -73,6 +66,7 @@ export function decode(jsSource: string): Uint8Array {
       }
       case 'ConditionalExpression': return 'ConditionalExpression:0'
       case 'CallExpression': return `CallExpression:${node.arguments.length}`
+      case 'OptionalCallExpression': return `OptionalCallExpression:${node.arguments.length}`
       case 'NewExpression': return `NewExpression:${node.arguments.length}`
       case 'MemberExpression': return `MemberExpression:${node.computed ? 1 : 0}`
       case 'OptionalMemberExpression': return `OptionalMemberExpression:${node.computed ? 1 : 0}`
@@ -156,6 +150,12 @@ export function decode(jsSource: string): Uint8Array {
         for (const arg of n.arguments) processExpr(arg)
         break
       }
+      case 'OptionalCallExpression': {
+        const n = node as t.OptionalCallExpression
+        processExpr(n.callee)
+        for (const arg of n.arguments) processExpr(arg)
+        break
+      }
       case 'NewExpression': {
         const n = node as t.NewExpression
         processExpr(n.callee)
@@ -200,18 +200,47 @@ export function decode(jsSource: string): Uint8Array {
       }
       case 'ArrowFunctionExpression': {
         const n = node as t.ArrowFunctionExpression
+        // Push params into scope (mirrors encoder)
+        const arrowParams = n.params.map((_, i) => nameFromHash(hash, 900 + i))
+        const savedScope = [...ctx.scope]
+        const savedTypedScope = [...ctx.typedScope]
+        for (const p of arrowParams) {
+          ctx.scope.push(p)
+          ctx.typedScope.push({ name: p, type: 'any' })
+        }
+        const savedInFn = ctx.inFunction
+        ctx.inFunction = true
+
         if (n.body.type === 'BlockStatement') {
           const ret = n.body.body[0]
           if (ret?.type === 'ReturnStatement') processExpr((ret as t.ReturnStatement).argument!)
         } else {
           processExpr(n.body)
         }
+
+        ctx.scope = savedScope
+        ctx.typedScope = savedTypedScope
+        ctx.inFunction = savedInFn
         break
       }
       case 'FunctionExpression': {
         const n = node as t.FunctionExpression
+        const fnParams = n.params.map((_, i) => nameFromHash(hash, 900 + i))
+        const savedScope = [...ctx.scope]
+        const savedTypedScope = [...ctx.typedScope]
+        for (const p of fnParams) {
+          ctx.scope.push(p)
+          ctx.typedScope.push({ name: p, type: 'any' })
+        }
+        const savedInFn = ctx.inFunction
+        ctx.inFunction = true
+
         const ret = n.body.body[0]
         if (ret?.type === 'ReturnStatement') processExpr((ret as t.ReturnStatement).argument!)
+
+        ctx.scope = savedScope
+        ctx.typedScope = savedTypedScope
+        ctx.inFunction = savedInFn
         break
       }
       case 'ClassExpression': {
@@ -228,7 +257,8 @@ export function decode(jsSource: string): Uint8Array {
 
   // ─── Process expression: lookup byte from dynamic table ────────────
 
-  function processExpr(node: t.Node): void {
+  /** Process expression node. Returns the candidate key used. */
+  function processExpr(node: t.Node): string {
     const exprCtx = { ...ctx, expressionOnly: true }
     const candidates = filterCandidates(exprCtx)
     const table = buildTable(candidates, hash)
@@ -245,6 +275,7 @@ export function decode(jsSource: string): Uint8Array {
     }
 
     processExprChildren(node)
+    return key
   }
 
   // ─── Process block: count byte + N statements ──────────────────────
@@ -311,7 +342,10 @@ export function decode(jsSource: string): Uint8Array {
         const n = node as t.VariableDeclaration
         const name = nameFromHash(hash, ctx.scope.length)
         ctx.scope.push(name)
-        processExpr(n.declarations[0].init!)
+        const initKey = processExpr(n.declarations[0].init!)
+        // Infer type from init candidate and track in typedScope (mirrors encoder)
+        const inferredType = inferTypeFromKey(initKey)
+        ctx.typedScope.push({ name, type: inferredType })
         break
       }
       case 'IfStatement': {
