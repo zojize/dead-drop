@@ -401,4 +401,12 @@ describe('maxExprDepth', () => {
     }
     expect(outputs.size).toBeGreaterThanOrEqual(2)
   })
+
+  it('lorem roundtrips with depth 64', () => {
+    const msg = `Lorem ipsum dolor sit amet, consectetur adipiscing elit. Fusce imperdiet magna consequat lectus lobortis, efficitur efficitur metus blandit. Vestibulum efficitur massa ligula. Curabitur mi nulla, tempus eget posuere eu, venenatis vitae lectus. Nulla facilisi. Donec non rhoncus dui. Integer nisi dolor, mattis sed ullamcorper non, tempus sed eros. Ut et metus sit amet neque tempus aliquet tempor non ligula. Maecenas sit amet dapibus erat. Fusce et risus quis nunc ornare dignissim. Maecenas ac libero eu ex porttitor mollis non in ligula.`;
+    const data = new TextEncoder().encode(msg)
+    const js = encode(data, { maxExprDepth: 64 })
+    const out = decode(js, { maxExprDepth: 64 })
+    expect(Array.from(out)).toEqual(Array.from(data))
+  })
 })

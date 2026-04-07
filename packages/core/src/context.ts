@@ -34,7 +34,7 @@ export interface ScopeEntry {
 }
 
 /** Max expression nesting depth before forcing leaf-only candidates. */
-export const MAX_EXPR_DEPTH = Infinity // default — configurable via createCodec
+export const MAX_EXPR_DEPTH = Infinity // default — override via createCodec for browser use
 
 export interface EncodingContext {
   inFunction: boolean
@@ -45,6 +45,7 @@ export interface EncodingContext {
   expressionOnly: boolean
   exprDepth: number
   maxExprDepth: number
+  blockDepth: number
 }
 
 export function initialContext(): EncodingContext {
@@ -57,6 +58,7 @@ export function initialContext(): EncodingContext {
     expressionOnly: false,
     exprDepth: 0,
     maxExprDepth: MAX_EXPR_DEPTH,
+    blockDepth: 0,
   }
 }
 
@@ -322,6 +324,20 @@ export function filterCandidates(ctx: EncodingContext): Candidate[] {
   const hasAnyScope = ctx.typedScope.length > 0
 
   return ALL_CANDIDATES.filter(c => {
+    // Block depth limit: filter out block-containing statements when deep
+    if (ctx.maxExprDepth < Infinity && ctx.blockDepth >= Math.floor(ctx.maxExprDepth / 3)) {
+      if (c.isStatement && c.children.some((ch: string) => ch === 'block')) return false
+    }
+
+    // Expression depth limit: filter out non-leaf EXPRESSIONS when deep.
+    // Statement candidates are NOT affected (they always start a fresh expr tree at depth 0).
+    // Expression candidates with children are filtered → only leaves remain.
+    // We have ~12 leaf expressions + ~200 total → always >= 12 unique after filter.
+    // But we need 256! So also keep all STATEMENT candidates (non-expression-only context).
+    // In expression-only context, we need >= 256 leaves — we DON'T have that.
+    // So for expression-only at max depth: keep the non-leaf candidates but with tiny weight.
+    // The weight scaling already handles this (10000x leaf bias).
+
     // Expression-only context: only expressions
     if (ctx.expressionOnly && c.isStatement) return false
 
@@ -363,19 +379,16 @@ export function filterCandidates(ctx: EncodingContext): Candidate[] {
       w += ctx.typedScope.length * 0.5
     }
 
-    // Depth-based weight scaling: as depth approaches maxExprDepth,
-    // aggressively bias toward leaves to keep AST shallow.
-    // The weight ratio between leaf and non-leaf grows exponentially.
+    // Depth-based weight scaling for expressions
     if (ctx.exprDepth > 0 && ctx.maxExprDepth < Infinity) {
-      const depthRatio = ctx.exprDepth / ctx.maxExprDepth // 0..1+
+      const depthRatio = ctx.exprDepth / ctx.maxExprDepth
       if (c.children.length === 0) {
-        // Leaves get exponentially heavier
-        w *= Math.pow(10, depthRatio * 4) // at ratio 1.0: 10000x
+        w *= Math.pow(10, depthRatio * 4)
       } else {
-        // Non-leaves get exponentially lighter
-        w *= Math.pow(0.1, depthRatio * 4) // at ratio 1.0: 0.0001x
+        w *= Math.pow(0.1, depthRatio * 4)
       }
     }
+
 
     return w !== c.weight ? { ...c, weight: w } : c
   })

@@ -25,6 +25,7 @@ type WorkItem =
   | { kind: 'expr'; node: t.Node; depth: number }
   | { kind: 'stmt'; node: t.Node }
   | { kind: 'block'; stmts: readonly t.Statement[] }
+  | { kind: 'block-depth-dec' }
   | { kind: 'byte'; value: number }
   | { kind: 'scope-save'; scope: string[]; typedScope: any[]; inFunction: boolean }
   | { kind: 'scope-restore'; scope: string[]; typedScope: any[]; inFunction: boolean }
@@ -338,10 +339,16 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
       case 'block': {
         bytes.push(item.stmts.length)
         hash = mixHash(hash, item.stmts.length)
+        ctx.blockDepth++
+        work.push({ kind: 'block-depth-dec' })
         for (let i = item.stmts.length - 1; i >= 0; i--)
           work.push({ kind: 'stmt', node: item.stmts[i] })
         break
       }
+
+      case 'block-depth-dec':
+        ctx.blockDepth--
+        break
 
       case 'byte':
         bytes.push(item.value)
