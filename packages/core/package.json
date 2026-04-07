@@ -3,8 +3,8 @@
   "type": "module",
   "version": "3.0.0",
   "description": "Steganographic message encoding via JavaScript ASTs",
-  "license": "MIT",
   "author": "Jeff Zou",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/zojize/dead-drop",
@@ -13,8 +13,8 @@
   "exports": {
     ".": {
       "development": "./src/lib.ts",
-      "import": "./dist/lib.mjs",
-      "types": "./dist/lib.d.mts"
+      "types": "./dist/lib.d.mts",
+      "import": "./dist/lib.mjs"
     }
   },
   "main": "./dist/lib.mjs",

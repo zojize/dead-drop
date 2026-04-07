@@ -18,7 +18,7 @@ npm install @zojize/dead-drop
 ## Quick start
 
 ```typescript
-import { encode, decode, createCodec } from '@zojize/dead-drop'
+import { createCodec, decode, encode } from '@zojize/dead-drop'
 
 // Zero-config
 const js = encode(new TextEncoder().encode('attack at dawn'))
