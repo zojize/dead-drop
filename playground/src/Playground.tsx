@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { encode, decode } from '@zojize/dead-drop'
+import { createCodec } from '@zojize/dead-drop'
 import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from 'lz-string'
 import './playground.css'
 
 const PLACEHOLDER = 'the quick brown fox jumps over the lazy dog'
 
-interface UrlState { input: string; seed?: number }
+interface UrlState { input: string; seed?: number; maxDepth?: number }
 
 function loadFromUrl(): UrlState | null {
   const params = new URLSearchParams(window.location.search)
@@ -27,6 +27,7 @@ export function Playground() {
   const restored = useRef(loadFromUrl())
   const [input, setInputRaw] = useState(restored.current?.input ?? '')
   const [seed, setSeed] = useState<number | undefined>(restored.current?.seed)
+  const [maxDepth, setMaxDepth] = useState<number | undefined>(restored.current?.maxDepth)
   const [encoded, setEncodedRaw] = useState('')
   const [decoded, setDecoded] = useState('')
   const [error, setError] = useState('')
@@ -46,18 +47,27 @@ export function Playground() {
     setEncodedRaw(val)
   }, [])
 
+  // Encode then immediately decode to verify round-trip
   useEffect(() => {
     if (dirRef.current !== 'encode') return
     try {
       setError('')
-      if (!input) { setEncodedRaw(''); setDecoded(''); setEncodeMs(null); return }
+      if (!input) { setEncodedRaw(''); setDecoded(''); setEncodeMs(null); setDecodeMs(null); return }
+      const codec = createCodec({ seed, maxExprDepth: maxDepth })
       const t0 = performance.now()
-      const js = encode(new TextEncoder().encode(input), { seed })
-      setEncodeMs(performance.now() - t0)
+      const js = codec.encode(new TextEncoder().encode(input))
+      const encTime = performance.now() - t0
+      setEncodeMs(encTime)
       setEncodedRaw(js)
+      // Actually decode to verify + measure
+      const t1 = performance.now()
+      const bytes = codec.decode(js)
+      setDecodeMs(performance.now() - t1)
+      setDecoded(new TextDecoder().decode(bytes))
     } catch (e: any) { setError(e.message) }
-  }, [input, seed])
+  }, [input, seed, maxDepth])
 
+  // Decode pasted JS
   useEffect(() => {
     if (dirRef.current !== 'decode') return
     setDecoded('')
@@ -66,16 +76,15 @@ export function Playground() {
       try {
         setError('')
         if (!encoded) { setDecoded(''); return }
+        const codec = createCodec({ maxExprDepth: maxDepth })
         const t0 = performance.now()
-        const bytes = decode(encoded)
+        const bytes = codec.decode(encoded)
         setDecodeMs(performance.now() - t0)
         setDecoded(new TextDecoder().decode(bytes))
       } catch (e: any) { setError(e.message) }
     }, 250)
     return () => clearTimeout(t)
-  }, [encoded])
-
-  const displayDecoded = dirRef.current === 'encode' ? input : decoded
+  }, [encoded, maxDepth])
 
   useEffect(() => {
     if (!initialized.current) {
@@ -86,16 +95,16 @@ export function Playground() {
 
   useEffect(() => {
     if (dirRef.current !== 'encode') return
-    const t = setTimeout(() => { if (input) saveToUrl({ input, seed }) }, 400)
+    const t = setTimeout(() => { if (input) saveToUrl({ input, seed, maxDepth }) }, 400)
     return () => clearTimeout(t)
-  }, [input, seed])
+  }, [input, seed, maxDepth])
 
   const share = useCallback(async () => {
-    saveToUrl({ input, seed })
+    saveToUrl({ input, seed, maxDepth })
     await navigator.clipboard.writeText(window.location.href)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
-  }, [input, seed])
+  }, [input, seed, maxDepth])
 
   const timing = encodeMs !== null || decodeMs !== null
     ? [
@@ -137,6 +146,21 @@ export function Playground() {
                 placeholder="auto"
               />
             </div>
+            <div className="sp-seed">
+              <label>depth</label>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={maxDepth ?? ''}
+                onChange={e => {
+                  const v = e.target.value
+                  if (v === '') { setMaxDepth(undefined); dirRef.current = 'encode'; return }
+                  const n = parseInt(v, 10)
+                  if (!isNaN(n) && n > 0) { setMaxDepth(n); dirRef.current = 'encode' }
+                }}
+                placeholder="∞"
+              />
+            </div>
             <button className="sp-share" onClick={share}>
               {copied ? 'copied!' : 'share'}
             </button>
@@ -157,8 +181,8 @@ export function Playground() {
             spellCheck={false}
           />
           <div className="sp-footer">
-            {displayDecoded && (
-              <div className="sp-decoded">decoded: <span>{displayDecoded}</span></div>
+            {decoded && (
+              <div className="sp-decoded">decoded: <span>{decoded}</span></div>
             )}
             {error && <div className="sp-err">{error}</div>}
             <span style={{ marginLeft: 'auto' }}>{encoded ? `${(encoded.length / Math.max(input.length, 1)).toFixed(1)}x` : ''}</span>
