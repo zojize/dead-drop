@@ -15,6 +15,7 @@ import {
   UNARY_OPS,
   UPDATE_OPS,
   ASSIGN_OPS,
+  MAX_EXPR_DEPTH,
 } from './context'
 
 /**
@@ -23,14 +24,18 @@ import {
  * Rebuilds the same dynamic context-dependent tables the encoder used,
  * recovering bytes from AST structure. No options needed.
  */
-export function decode(jsSource: string): Uint8Array {
+export interface DecodeOptions {
+  maxExprDepth?: number
+}
+
+export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
   const ast = parse(jsSource, {
     plugins: [['optionalChainingAssign', { version: '2023-07' }]],
   })
 
   const bytes: number[] = []
   let hash = 0xDEADD
-  const ctx: EncodingContext = initialContext()
+  const ctx: EncodingContext = { ...initialContext(), maxExprDepth: options?.maxExprDepth ?? MAX_EXPR_DEPTH }
 
   // ─── Identify a candidate key from a parsed AST node ───────────────
 

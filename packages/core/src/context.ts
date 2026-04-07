@@ -34,7 +34,7 @@ export interface ScopeEntry {
 }
 
 /** Max expression nesting depth before forcing leaf-only candidates. */
-export const MAX_EXPR_DEPTH = Infinity // disabled by default — configurable via factory
+export const MAX_EXPR_DEPTH = Infinity // default — configurable via createCodec
 
 export interface EncodingContext {
   inFunction: boolean
@@ -44,6 +44,7 @@ export interface EncodingContext {
   typedScope: ScopeEntry[]
   expressionOnly: boolean
   exprDepth: number
+  maxExprDepth: number
 }
 
 export function initialContext(): EncodingContext {
@@ -55,6 +56,7 @@ export function initialContext(): EncodingContext {
     typedScope: [],
     expressionOnly: false,
     exprDepth: 0,
+    maxExprDepth: MAX_EXPR_DEPTH,
   }
 }
 
@@ -319,7 +321,7 @@ export function filterCandidates(ctx: EncodingContext): Candidate[] {
   const hasMemberSafe = scopeHasType(ctx.typedScope, MEMBER_SAFE_TYPES)
   const hasAnyScope = ctx.typedScope.length > 0
 
-  const forceLeaf = ctx.exprDepth >= MAX_EXPR_DEPTH
+  const forceLeaf = ctx.exprDepth >= ctx.maxExprDepth
 
   return ALL_CANDIDATES.filter(c => {
     // At max expression depth, only allow leaf expressions (no children)
