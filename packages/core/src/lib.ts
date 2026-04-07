@@ -1,12 +1,16 @@
-import { encode as _encode, type EncodeOptions } from './encode'
-import { decode as _decode, type DecodeOptions } from './decode'
+import type { DecodeOptions } from './decode'
+import type { EncodeOptions } from './encode'
 import { MAX_EXPR_DEPTH } from './context'
+import { decode as _decode } from './decode'
+import { encode as _encode } from './encode'
 
 export interface CodecOptions {
   /** Seed for cosmetic PRNG. Affects names/numbers/strings but not decoded data. */
   seed?: number
-  /** Max expression nesting depth. Limits AST depth to keep output parseable
-   *  by recursive-descent parsers. Default: Infinity (no limit). */
+  /**
+   * Max expression nesting depth. Limits AST depth to keep output parseable
+   *  by recursive-descent parsers. Default: Infinity (no limit).
+   */
   maxExprDepth?: number
 }
 
@@ -33,4 +37,4 @@ export const encode = _encode
 /** Decode JS source to bytes. */
 export const decode = _decode
 
-export type { EncodeOptions, DecodeOptions }
+export type { DecodeOptions, EncodeOptions }
