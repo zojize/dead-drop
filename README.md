@@ -135,10 +135,15 @@ return bytes[4 .. 4+length]
   decoder ignores them. You can randomize every name, string, and number
   in the encoded JS and `decode()` still returns the same bytes.
 
+- **Runtime-safe output.** Generated JS runs without errors. The encoder
+  tracks the inferred type of each declared variable (`function`, `array`,
+  `object`, etc.) and only offers operations when their operand types are
+  available — e.g. `CallExpression` only when scope has a callable.
+
 - **Dynamic tables from context.** The candidate pool includes both
   statement and expression types, filtered and shuffled per-position.
-  This produces varied, realistic-looking JS with control flow, declarations,
-  and scope-aware variable references.
+  Type-gated candidates produce realistic, runnable JS with control flow,
+  declarations, and scope-aware variable references.
 
 - **Deterministic hash-based shuffle.** The table ordering at each position
   depends on a running structural hash mixed with each consumed byte.
@@ -157,7 +162,7 @@ return bytes[4 .. 4+length]
 
 ```bash
 bun install
-bun run test          # 32 tests including fuzz + randomization invariant
+bun run test          # 36 tests including fuzz, eval safety, randomization invariant
 bun run typecheck     # typecheck all packages
 bun run knip          # check for unused deps/exports
 ```

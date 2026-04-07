@@ -26,11 +26,19 @@ export interface Candidate {
 
 // ─── Context State ──────────────────────────────────────────────────────────
 
+type ScopeType = 'number' | 'string' | 'boolean' | 'function' | 'array' | 'object' | 'class' | 'regexp' | 'any'
+
+export interface ScopeEntry {
+  name: string
+  type: ScopeType
+}
+
 export interface EncodingContext {
   inFunction: boolean
   inAsync: boolean
   inLoop: boolean
   scope: string[]        // declared variable names
+  typedScope: ScopeEntry[] // declared variable names with inferred types
   expressionOnly: boolean
 }
 
@@ -40,9 +48,42 @@ export function initialContext(): EncodingContext {
     inAsync: false,
     inLoop: false,
     scope: [],
+    typedScope: [],
     expressionOnly: false,
   }
 }
+
+// ─── Type inference from candidate key ─────────────────────────────────────
+
+/** Infer the type a VariableDeclaration's init expression produces, from its candidate key. */
+export function inferTypeFromKey(candidateKey: string): ScopeType {
+  const base = candidateKey.split(':')[0]
+  switch (base) {
+    case 'NumericLiteral': case 'BigIntLiteral': return 'number'
+    case 'StringLiteral': case 'TemplateLiteral': return 'string'
+    case 'BooleanLiteral': return 'boolean'
+    case 'ArrowFunctionExpression': case 'FunctionExpression': return 'function'
+    case 'ArrayExpression': return 'array'
+    case 'ObjectExpression': return 'object'
+    case 'ClassExpression': return 'class'
+    case 'RegExpLiteral': return 'regexp'
+    default: return 'any'
+  }
+}
+
+/** Check if scope has an entry matching any of the given types. */
+function scopeHasType(scope: ScopeEntry[], types: ReadonlySet<ScopeType>): boolean {
+  return scope.some(e => types.has(e.type))
+}
+
+/** Types that support member access safely (won't throw on `.x`). */
+const MEMBER_SAFE_TYPES: ReadonlySet<ScopeType> = new Set(['object', 'array', 'string', 'function', 'class', 'regexp', 'any'])
+/** Types that are callable. */
+const CALLABLE_TYPES: ReadonlySet<ScopeType> = new Set(['function', 'any'])
+/** Types that can be used with `new`. */
+const CONSTRUCTABLE_TYPES: ReadonlySet<ScopeType> = new Set(['function', 'class', 'any'])
+// Note: IN_RHS_TYPES removed — 'in' operator is always filtered out since
+// both operands are data children and RHS can't be guaranteed to be an object.
 
 // ─── Running Structural Hash ────────────────────────────────────────────────
 
@@ -98,10 +139,8 @@ function buildAllCandidates(): Candidate[] {
   c.push({ key: 'BigIntLiteral:0', nodeType: 'BigIntLiteral', variant: 0, children: [], weight: 3, isStatement: false })
   c.push({ key: 'ThisExpression:0', nodeType: 'ThisExpression', variant: 0, children: [], weight: 3, isStatement: false })
 
-  // RegExpLiteral — 64 flag combos (weight 3, leaves)
-  for (let flags = 0; flags < 64; flags++) {
-    c.push({ key: `RegExpLiteral:${flags}`, nodeType: 'RegExpLiteral', variant: flags, children: [], weight: 3, isStatement: false })
-  }
+  // RegExpLiteral — single leaf entry (flags are cosmetic, randomized by encoder)
+  c.push({ key: 'RegExpLiteral:0', nodeType: 'RegExpLiteral', variant: 0, children: [], weight: 3, isStatement: false })
 
   // Binary operators (weight 1, 2 children)
   for (let i = 0; i < BINARY_OPS.length; i++) {
@@ -131,7 +170,7 @@ function buildAllCandidates(): Candidate[] {
   // Conditional (weight 0.8, 3 children)
   c.push({ key: 'ConditionalExpression:0', nodeType: 'ConditionalExpression', variant: 0, children: ['expr', 'expr', 'expr'], weight: 0.8, isStatement: false })
 
-  // Call/New expression — arg count as variant
+  // Call/New expression — arg count as variant (type-gated: only when scope has callable/constructable)
   for (let n = 0; n < 19; n++) {
     const ch: SlotKind[] = ['expr', ...Array(n).fill('expr') as SlotKind[]]
     c.push({ key: `CallExpression:${n}`, nodeType: 'CallExpression', variant: n, children: ch, weight: n <= 3 ? 1.5 : n <= 8 ? 0.8 : 0.4, isStatement: false })
@@ -141,41 +180,49 @@ function buildAllCandidates(): Candidate[] {
     c.push({ key: `NewExpression:${n}`, nodeType: 'NewExpression', variant: n, children: ch, weight: n <= 3 ? 1.2 : 0.5, isStatement: false })
   }
 
-  // Member expressions (weight 1.5)
+  // OptionalCallExpression — type-gated: expr?.(args) throws if expr is non-null non-callable
+  for (let n = 0; n < 19; n++) {
+    const ch: SlotKind[] = ['expr', ...Array(n).fill('expr') as SlotKind[]]
+    c.push({ key: `OptionalCallExpression:${n}`, nodeType: 'OptionalCallExpression', variant: n, children: ch, weight: n <= 3 ? 1.2 : n <= 8 ? 0.6 : 0.3, isStatement: false })
+  }
+
+  // Member expressions (type-gated: only when scope has member-safe types)
   c.push({ key: 'MemberExpression:0', nodeType: 'MemberExpression', variant: 0, children: ['expr'], weight: 1.5, isStatement: false })
   c.push({ key: 'MemberExpression:1', nodeType: 'MemberExpression', variant: 1, children: ['expr', 'expr'], weight: 1, isStatement: false })
+  // OptionalMemberExpression — always safe (?.  never throws)
   c.push({ key: 'OptionalMemberExpression:0', nodeType: 'OptionalMemberExpression', variant: 0, children: ['expr'], weight: 1, isStatement: false })
   c.push({ key: 'OptionalMemberExpression:1', nodeType: 'OptionalMemberExpression', variant: 1, children: ['expr', 'expr'], weight: 0.8, isStatement: false })
 
-  // Array/Object — element/prop count
-  for (let n = 0; n < 16; n++) {
-    c.push({ key: `ArrayExpression:${n}`, nodeType: 'ArrayExpression', variant: n, children: Array(n).fill('expr') as SlotKind[], weight: n <= 3 ? 1.5 : n <= 8 ? 0.6 : 0.3, isStatement: false })
+  // Array/Object — element/prop count (extended to 0-31 for more unique candidates)
+  for (let n = 0; n < 32; n++) {
+    c.push({ key: `ArrayExpression:${n}`, nodeType: 'ArrayExpression', variant: n, children: Array(n).fill('expr') as SlotKind[], weight: n <= 3 ? 1.5 : n <= 8 ? 0.6 : 0.15, isStatement: false })
   }
-  for (let n = 0; n < 16; n++) {
+  for (let n = 0; n < 32; n++) {
     const ch: SlotKind[] = []
     for (let j = 0; j < n; j++) { ch.push('expr', 'expr') }
-    c.push({ key: `ObjectExpression:${n}`, nodeType: 'ObjectExpression', variant: n, children: ch, weight: n <= 3 ? 1.2 : n <= 8 ? 0.5 : 0.25, isStatement: false })
+    c.push({ key: `ObjectExpression:${n}`, nodeType: 'ObjectExpression', variant: n, children: ch, weight: n <= 3 ? 1.2 : n <= 8 ? 0.5 : 0.1, isStatement: false })
   }
 
-  // Sequence expression (count 2-16)
-  for (let n = 2; n <= 16; n++) {
-    c.push({ key: `SequenceExpression:${n - 2}`, nodeType: 'SequenceExpression', variant: n - 2, children: Array(n).fill('expr') as SlotKind[], weight: n <= 4 ? 0.8 : 0.3, isStatement: false })
+  // Sequence expression (count 2-29, extended range)
+  for (let n = 2; n <= 29; n++) {
+    c.push({ key: `SequenceExpression:${n - 2}`, nodeType: 'SequenceExpression', variant: n - 2, children: Array(n).fill('expr') as SlotKind[], weight: n <= 4 ? 0.8 : 0.1, isStatement: false })
   }
 
-  // Template literals
-  for (let n = 0; n < 8; n++) {
-    c.push({ key: `TemplateLiteral:${n}`, nodeType: 'TemplateLiteral', variant: n, children: Array(n).fill('expr') as SlotKind[], weight: n <= 2 ? 1 : 0.4, isStatement: false })
+  // Template literals (extended to 0-16)
+  for (let n = 0; n < 17; n++) {
+    c.push({ key: `TemplateLiteral:${n}`, nodeType: 'TemplateLiteral', variant: n, children: Array(n).fill('expr') as SlotKind[], weight: n <= 2 ? 1 : 0.15, isStatement: false })
   }
+  // TaggedTemplateExpression (type-gated: tag must be callable)
   for (let n = 0; n < 8; n++) {
     c.push({ key: `TaggedTemplateExpression:${n}`, nodeType: 'TaggedTemplateExpression', variant: n, children: ['expr', ...Array(n).fill('expr') as SlotKind[]], weight: n <= 2 ? 0.8 : 0.3, isStatement: false })
   }
 
-  // Arrow/Function expression — param count
-  for (let n = 0; n < 16; n++) {
-    c.push({ key: `ArrowFunctionExpression:${n}`, nodeType: 'ArrowFunctionExpression', variant: n, children: ['expr'], weight: n <= 3 ? 1 : 0.4, isStatement: false })
+  // Arrow/Function expression — param count (extended to 0-23)
+  for (let n = 0; n < 24; n++) {
+    c.push({ key: `ArrowFunctionExpression:${n}`, nodeType: 'ArrowFunctionExpression', variant: n, children: ['expr'], weight: n <= 3 ? 1 : 0.15, isStatement: false })
   }
-  for (let n = 0; n < 16; n++) {
-    c.push({ key: `FunctionExpression:${n}`, nodeType: 'FunctionExpression', variant: n, children: ['expr'], weight: n <= 3 ? 0.8 : 0.3, isStatement: false })
+  for (let n = 0; n < 24; n++) {
+    c.push({ key: `FunctionExpression:${n}`, nodeType: 'FunctionExpression', variant: n, children: ['expr'], weight: n <= 3 ? 0.8 : 0.15, isStatement: false })
   }
 
   // SpreadElement (weight 0.5)
@@ -262,6 +309,11 @@ const ALL_CANDIDATES = buildAllCandidates()
 
 /** Filter candidates by current context. */
 export function filterCandidates(ctx: EncodingContext): Candidate[] {
+  const hasCallable = scopeHasType(ctx.typedScope, CALLABLE_TYPES)
+  const hasConstructable = scopeHasType(ctx.typedScope, CONSTRUCTABLE_TYPES)
+  const hasMemberSafe = scopeHasType(ctx.typedScope, MEMBER_SAFE_TYPES)
+  const hasAnyScope = ctx.typedScope.length > 0
+
   return ALL_CANDIDATES.filter(c => {
     // Expression-only context: only expressions
     if (ctx.expressionOnly && c.isStatement) return false
@@ -276,7 +328,33 @@ export function filterCandidates(ctx: EncodingContext): Candidate[] {
     if (c.nodeType === 'ContinueStatement' && !ctx.inLoop) return false
     if (c.nodeType === 'AwaitExpression' && !ctx.inAsync) return false
 
+    // Type-safety gates: filter candidates that would cause runtime errors
+    if (c.nodeType === 'CallExpression' && !hasCallable) return false
+    if (c.nodeType === 'OptionalCallExpression' && !hasCallable) return false
+    if (c.nodeType === 'NewExpression' && !hasConstructable) return false
+    if (c.nodeType === 'MemberExpression' && !hasMemberSafe) return false
+    if (c.nodeType === 'TaggedTemplateExpression' && !hasCallable) return false
+    if (c.nodeType === 'AssignmentExpression' && !hasAnyScope) return false
+    if (c.nodeType === 'UpdateExpression' && !hasAnyScope) return false
+    // ClassExpression with superClass — super must be constructable
+    if (c.nodeType === 'ClassExpression' && c.variant === 1 && !hasConstructable) return false
+    // SpreadElement — argument must be iterable, can't guarantee
+    if (c.nodeType === 'SpreadElement') return false
+    // 'in' operator (BINARY_OPS index 15) — RHS must be object, can't guarantee
+    if (c.nodeType === 'BinaryExpression' && c.variant === 15) return false
+    // 'delete' operator (UNARY_OPS index 6) — 'delete ident' is illegal in strict mode
+    if (c.nodeType === 'UnaryExpression' && c.variant === 6) return false
+    // BigIntLiteral — mixed BigInt/Number operations throw TypeError
+    if (c.nodeType === 'BigIntLiteral') return false
+
     return true
+  }).map(c => {
+    // Dynamic weight: Identifier gets heavier with more scope entries
+    // (more declared vars → more realistic to reference them)
+    if (c.nodeType === 'Identifier' && ctx.typedScope.length > 0) {
+      return { ...c, weight: c.weight + ctx.typedScope.length * 0.5 }
+    }
+    return c
   })
 }
 

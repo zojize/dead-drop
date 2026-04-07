@@ -101,6 +101,16 @@ export function generateCompact(program: t.Program): string {
         raw('('); parenExpr(node.callee as t.Expression)
         break
       }
+      case 'OptionalCallExpression': {
+        raw(')')
+        const oArgs = node.arguments as t.Expression[]
+        for (let i = oArgs.length - 1; i >= 0; i--) {
+          if (i < oArgs.length - 1) raw(',')
+          expr(oArgs[i])
+        }
+        raw('?.('); parenExpr(node.callee as t.Expression)
+        break
+      }
       case 'NewExpression': {
         raw(')')
         const args = node.arguments as t.Expression[]
