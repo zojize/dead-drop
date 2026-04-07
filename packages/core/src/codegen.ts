@@ -5,23 +5,32 @@
  */
 import type * as t from '@babel/types'
 
-type GenItem =
-  | { kind: 'expr'; node: t.Expression }
-  | { kind: 'stmt'; node: t.Statement }
-  | { kind: 'raw'; text: string }
+type GenItem
+  = | { kind: 'expr', node: t.Expression }
+    | { kind: 'stmt', node: t.Statement }
+    | { kind: 'raw', text: string }
+
+const RE_ALPHA_OPERATOR = /^[a-z]/i
 
 export function generateCompact(program: t.Program): string {
   const parts: string[] = []
   const work: GenItem[] = []
 
-  function raw(text: string) { work.push({ kind: 'raw', text }) }
-  function expr(node: t.Expression) { work.push({ kind: 'expr', node }) }
-  function stmt(node: t.Statement) { work.push({ kind: 'stmt', node }) }
+  function raw(text: string) {
+    work.push({ kind: 'raw', text })
+  }
+  function expr(node: t.Expression) {
+    work.push({ kind: 'expr', node })
+  }
+  function stmt(node: t.Statement) {
+    work.push({ kind: 'stmt', node })
+  }
 
   /** Push items in reverse so they're processed left-to-right (LIFO). */
   function stmtList(nodes: readonly t.Statement[], sep = '') {
     for (let i = nodes.length - 1; i >= 0; i--) {
-      if (sep && i < nodes.length - 1) raw(sep)
+      if (sep && i < nodes.length - 1)
+        raw(sep)
       stmt(nodes[i])
     }
   }
@@ -36,8 +45,13 @@ export function generateCompact(program: t.Program): string {
       || node.type === 'NullLiteral' || node.type === 'ArrayExpression'
       || node.type === 'BigIntLiteral' || node.type === 'ThisExpression'
       || node.type === 'TemplateLiteral'
-    if (leaf) { expr(node); return }
-    raw(')'); expr(node); raw('(')
+    if (leaf) {
+      expr(node)
+      return
+    }
+    raw(')')
+    expr(node)
+    raw('(')
   }
 
   function processExpr(node: t.Expression): void {
@@ -58,101 +72,142 @@ export function generateCompact(program: t.Program): string {
         parts.push('null')
         break
       case 'BigIntLiteral':
-        parts.push(node.value + 'n')
+        parts.push(`${node.value}n`)
         break
       case 'ThisExpression':
         parts.push('this')
         break
       case 'RegExpLiteral':
-        parts.push('/' + node.pattern + '/' + node.flags)
+        parts.push(`/${node.pattern}/${node.flags}`)
         break
       case 'BinaryExpression': {
-        const op = /^[a-z]/i.test(node.operator) ? ` ${node.operator} ` : node.operator
-        raw(')'); parenExpr(node.right as t.Expression); raw(op); parenExpr(node.left as t.Expression); raw('(')
+        const op = RE_ALPHA_OPERATOR.test(node.operator) ? ` ${node.operator} ` : node.operator
+        raw(')')
+        parenExpr(node.right as t.Expression)
+        raw(op)
+        parenExpr(node.left as t.Expression)
+        raw('(')
         break
       }
       case 'LogicalExpression': {
-        raw(')'); parenExpr(node.right as t.Expression); raw(node.operator); parenExpr(node.left as t.Expression); raw('(')
+        raw(')')
+        parenExpr(node.right as t.Expression)
+        raw(node.operator)
+        parenExpr(node.left as t.Expression)
+        raw('(')
         break
       }
       case 'UnaryExpression':
-        raw(')'); parenExpr(node.argument as t.Expression); raw(node.operator.length > 1 ? node.operator + ' (' : node.operator + '(')
+        raw(')')
+        parenExpr(node.argument as t.Expression)
+        raw(node.operator.length > 1 ? `${node.operator} (` : `${node.operator}(`)
         break
       case 'UpdateExpression':
         if (node.prefix) {
-          raw(')'); parenExpr(node.argument as t.Expression); raw(node.operator + '(')
-        } else {
-          raw(')'); raw(node.operator); parenExpr(node.argument as t.Expression); raw('(')
+          raw(')')
+          parenExpr(node.argument as t.Expression)
+          raw(`${node.operator}(`)
+        }
+        else {
+          raw(')')
+          raw(node.operator)
+          parenExpr(node.argument as t.Expression)
+          raw('(')
         }
         break
       case 'ConditionalExpression':
-        raw(')'); parenExpr(node.alternate as t.Expression)
-        raw(':'); parenExpr(node.consequent as t.Expression)
-        raw('?'); parenExpr(node.test as t.Expression)
+        raw(')')
+        parenExpr(node.alternate as t.Expression)
+        raw(':')
+        parenExpr(node.consequent as t.Expression)
+        raw('?')
+        parenExpr(node.test as t.Expression)
         raw('(')
         break
       case 'CallExpression': {
         raw(')')
         const args = node.arguments as t.Expression[]
         for (let i = args.length - 1; i >= 0; i--) {
-          if (i < args.length - 1) raw(',')
+          if (i < args.length - 1)
+            raw(',')
           expr(args[i])
         }
-        raw('('); parenExpr(node.callee as t.Expression)
+        raw('(')
+        parenExpr(node.callee as t.Expression)
         break
       }
       case 'OptionalCallExpression': {
         raw(')')
         const oArgs = node.arguments as t.Expression[]
         for (let i = oArgs.length - 1; i >= 0; i--) {
-          if (i < oArgs.length - 1) raw(',')
+          if (i < oArgs.length - 1)
+            raw(',')
           expr(oArgs[i])
         }
-        raw('?.('); parenExpr(node.callee as t.Expression)
+        raw('?.(')
+        parenExpr(node.callee as t.Expression)
         break
       }
       case 'NewExpression': {
         raw(')')
         const args = node.arguments as t.Expression[]
         for (let i = args.length - 1; i >= 0; i--) {
-          if (i < args.length - 1) raw(',')
+          if (i < args.length - 1)
+            raw(',')
           expr(args[i])
         }
-        raw('('); parenExpr(node.callee as t.Expression); raw('new ')
+        raw('(')
+        parenExpr(node.callee as t.Expression)
+        raw('new ')
         break
       }
       case 'MemberExpression':
         if (node.computed) {
-          raw(']'); expr(node.property as t.Expression); raw('[')
+          raw(']')
+          expr(node.property as t.Expression)
+          raw('[')
           parenExpr(node.object as t.Expression)
-        } else {
+        }
+        else {
           // Always paren the object — avoids `42.log` being parsed as float
-          raw('.' + (node.property as t.Identifier).name)
-          raw(')'); expr(node.object as t.Expression); raw('(')
+          raw(`.${(node.property as t.Identifier).name}`)
+          raw(')')
+          expr(node.object as t.Expression)
+          raw('(')
         }
         break
       case 'OptionalMemberExpression':
         if (node.computed) {
-          raw(']'); expr(node.property as t.Expression); raw('?.[')
+          raw(']')
+          expr(node.property as t.Expression)
+          raw('?.[')
           parenExpr(node.object as t.Expression)
-        } else {
-          raw('?.' + (node.property as t.Identifier).name)
-          raw(')'); expr(node.object as t.Expression); raw('(')
+        }
+        else {
+          raw(`?.${(node.property as t.Identifier).name}`)
+          raw(')')
+          expr(node.object as t.Expression)
+          raw('(')
         }
         break
       case 'AssignmentExpression':
-        raw(')'); parenExpr(node.right as t.Expression)
-        raw(node.operator); expr(node.left as t.Expression)
+        raw(')')
+        parenExpr(node.right as t.Expression)
+        raw(node.operator)
+        expr(node.left as t.Expression)
         raw('(')
         break
       case 'ArrayExpression': {
         raw(']')
         const els = node.elements as (t.Expression | t.SpreadElement)[]
         for (let i = els.length - 1; i >= 0; i--) {
-          if (i < els.length - 1) raw(',')
+          if (i < els.length - 1)
+            raw(',')
           if (els[i].type === 'SpreadElement') {
-            expr((els[i] as t.SpreadElement).argument); raw('...')
-          } else {
+            expr((els[i] as t.SpreadElement).argument)
+            raw('...')
+          }
+          else {
             expr(els[i] as t.Expression)
           }
         }
@@ -163,11 +218,16 @@ export function generateCompact(program: t.Program): string {
         raw('})')
         const props = node.properties as t.ObjectProperty[]
         for (let i = props.length - 1; i >= 0; i--) {
-          if (i < props.length - 1) raw(',')
-          parenExpr(props[i].value as t.Expression); raw(':')
+          if (i < props.length - 1)
+            raw(',')
+          parenExpr(props[i].value as t.Expression)
+          raw(':')
           if (props[i].computed) {
-            raw(']'); parenExpr(props[i].key as t.Expression); raw('[')
-          } else {
+            raw(']')
+            parenExpr(props[i].key as t.Expression)
+            raw('[')
+          }
+          else {
             parenExpr(props[i].key as t.Expression)
           }
         }
@@ -178,7 +238,8 @@ export function generateCompact(program: t.Program): string {
         raw(')')
         const exprs = node.expressions
         for (let i = exprs.length - 1; i >= 0; i--) {
-          if (i < exprs.length - 1) raw(',')
+          if (i < exprs.length - 1)
+            raw(',')
           expr(exprs[i])
         }
         raw('(')
@@ -193,7 +254,9 @@ export function generateCompact(program: t.Program): string {
         for (let i = quasis.length - 1; i >= 0; i--) {
           raw(quasis[i].value.raw)
           if (i > 0) {
-            raw('}'); expr(exprs[i - 1]); raw('${')
+            raw('}')
+            expr(exprs[i - 1])
+            raw('${')
           }
         }
         raw('`')
@@ -208,22 +271,28 @@ export function generateCompact(program: t.Program): string {
         for (let i = quasis.length - 1; i >= 0; i--) {
           raw(quasis[i].value.raw)
           if (i > 0) {
-            raw('}'); expr(exprs[i - 1]); raw('${')
+            raw('}')
+            expr(exprs[i - 1])
+            raw('${')
           }
         }
-        raw('`'); parenExpr(node.tag as t.Expression)
+        raw('`')
+        parenExpr(node.tag as t.Expression)
         break
       }
       case 'ArrowFunctionExpression': {
         const params = node.params as t.Identifier[]
-        raw(')'); expr(node.body as t.Expression)
+        raw(')')
+        expr(node.body as t.Expression)
         raw('=>')
         if (params.length === 1) {
           raw(params[0].name)
-        } else {
+        }
+        else {
           raw(')')
           for (let i = params.length - 1; i >= 0; i--) {
-            if (i < params.length - 1) raw(',')
+            if (i < params.length - 1)
+              raw(',')
             raw(params[i].name)
           }
           raw('(')
@@ -239,7 +308,8 @@ export function generateCompact(program: t.Program): string {
         stmtList(body.body)
         raw('){')
         for (let i = params.length - 1; i >= 0; i--) {
-          if (i < params.length - 1) raw(',')
+          if (i < params.length - 1)
+            raw(',')
           raw(params[i].name)
         }
         raw('(function(')
@@ -252,13 +322,16 @@ export function generateCompact(program: t.Program): string {
           raw('{}')
           parenExpr(node.superClass as t.Expression)
           raw('(class extends ')
-        } else {
+        }
+        else {
           raw('(class{})')
         }
         break
       }
       case 'AwaitExpression':
-        raw(')'); parenExpr(node.argument as t.Expression); raw('await (')
+        raw(')')
+        parenExpr(node.argument as t.Expression)
+        raw('await (')
         break
       default:
         parts.push('0') // fallback
@@ -268,49 +341,71 @@ export function generateCompact(program: t.Program): string {
   function processStmt(node: t.Statement): void {
     switch (node.type) {
       case 'ExpressionStatement':
-        raw(';'); expr((node as t.ExpressionStatement).expression)
+        raw(';')
+        expr((node as t.ExpressionStatement).expression)
         break
       case 'IfStatement': {
         const n = node as t.IfStatement
         if (n.alternate) {
           // else block
-          raw('}'); stmtList((n.alternate as t.BlockStatement).body); raw('else{')
+          raw('}')
+          stmtList((n.alternate as t.BlockStatement).body)
+          raw('else{')
         }
-        raw('}'); stmtList((n.consequent as t.BlockStatement).body)
-        raw('){'); parenExpr(n.test as t.Expression); raw('if(')
+        raw('}')
+        stmtList((n.consequent as t.BlockStatement).body)
+        raw('){')
+        parenExpr(n.test as t.Expression)
+        raw('if(')
         break
       }
       case 'WhileStatement': {
         const n = node as t.WhileStatement
-        stmt(n.body); raw(')'); parenExpr(n.test as t.Expression); raw('while(')
+        stmt(n.body)
+        raw(')')
+        parenExpr(n.test as t.Expression)
+        raw('while(')
         break
       }
       case 'ForStatement': {
         const n = node as t.ForStatement
-        stmt(n.body); raw(')')
-        if (n.update) expr(n.update as t.Expression)
+        stmt(n.body)
+        raw(')')
+        if (n.update)
+          expr(n.update as t.Expression)
         raw(';')
-        if (n.test) expr(n.test as t.Expression)
+        if (n.test)
+          expr(n.test as t.Expression)
         raw(';')
-        if (n.init) expr(n.init as t.Expression)
+        if (n.init)
+          expr(n.init as t.Expression)
         raw('for(')
         break
       }
       case 'DoWhileStatement': {
         const n = node as t.DoWhileStatement
-        raw(');'); parenExpr(n.test as t.Expression); raw('while(')
-        stmt(n.body); raw('do ')
+        raw(');')
+        parenExpr(n.test as t.Expression)
+        raw('while(')
+        stmt(n.body)
+        raw('do ')
         break
       }
       case 'ReturnStatement':
-        raw(';'); expr((node as t.ReturnStatement).argument as t.Expression); raw('return ')
+        raw(';')
+        expr((node as t.ReturnStatement).argument as t.Expression)
+        raw('return ')
         break
       case 'ThrowStatement':
-        raw(';'); expr((node as t.ThrowStatement).argument as t.Expression); raw('throw ')
+        raw(';')
+        expr((node as t.ThrowStatement).argument as t.Expression)
+        raw('throw ')
         break
       case 'BlockStatement': {
         const n = node as t.BlockStatement
-        raw('}'); stmtList(n.body); raw('{')
+        raw('}')
+        stmtList(n.body)
+        raw('{')
         break
       }
       case 'EmptyStatement':
@@ -327,9 +422,13 @@ export function generateCompact(program: t.Program): string {
         break
       case 'TryStatement': {
         const n = node as t.TryStatement
-        raw('}'); stmtList(n.handler!.body.body)
-        raw('){'); raw((n.handler!.param as t.Identifier).name); raw('}catch(')
-        stmtList(n.block.body); raw('try{')
+        raw('}')
+        stmtList(n.handler!.body.body)
+        raw('){')
+        raw((n.handler!.param as t.Identifier).name)
+        raw('}catch(')
+        stmtList(n.block.body)
+        raw('try{')
         break
       }
       case 'SwitchStatement': {
@@ -338,21 +437,27 @@ export function generateCompact(program: t.Program): string {
         for (let i = n.cases.length - 1; i >= 0; i--) {
           const c = n.cases[i]
           stmtList(c.consequent)
-          raw(':'); expr(c.test as t.Expression); raw('case ')
+          raw(':')
+          expr(c.test as t.Expression)
+          raw('case ')
         }
-        raw('){'); parenExpr(n.discriminant as t.Expression); raw('switch(')
+        raw('){')
+        parenExpr(n.discriminant as t.Expression)
+        raw('switch(')
         break
       }
       case 'LabeledStatement': {
         const n = node as t.LabeledStatement
-        stmt(n.body); raw(n.label.name + ':')
+        stmt(n.body)
+        raw(`${n.label.name}:`)
         break
       }
       case 'VariableDeclaration': {
         const n = node as t.VariableDeclaration
         const d = n.declarations[0]
-        raw(';'); expr(d.init as t.Expression)
-        raw(n.kind + ' ' + (d.id as t.Identifier).name + '=')
+        raw(';')
+        expr(d.init as t.Expression)
+        raw(`${n.kind} ${(d.id as t.Identifier).name}=`)
         break
       }
       default:
@@ -369,9 +474,15 @@ export function generateCompact(program: t.Program): string {
   while (work.length > 0) {
     const item = work.pop()!
     switch (item.kind) {
-      case 'expr': processExpr(item.node); break
-      case 'stmt': processStmt(item.node); break
-      case 'raw': parts.push(item.text); break
+      case 'expr':
+        processExpr(item.node)
+        break
+      case 'stmt':
+        processStmt(item.node)
+        break
+      case 'raw':
+        parts.push(item.text)
+        break
     }
   }
 

@@ -1,11 +1,12 @@
 #!/usr/bin/env bun
 
 import { readFileSync } from 'node:fs'
-import { encode } from './encode'
+import process from 'node:process'
 import { decode } from './decode'
+import { encode } from './encode'
 
 // Public API exports
-export { encode, decode }
+export { decode, encode }
 
 // CLI
 const args = process.argv.slice(2)
@@ -20,7 +21,8 @@ function usage(): never {
   process.exit(1)
 }
 
-if (!command) usage()
+if (!command)
+  usage()
 
 switch (command) {
   case 'encode': {
@@ -31,9 +33,11 @@ switch (command) {
         process.exit(1)
       }
       input = readFileSync(args[2])
-    } else if (args[1]) {
+    }
+    else if (args[1]) {
       input = new TextEncoder().encode(args[1])
-    } else {
+    }
+    else {
       console.error('Error: encode requires a message or --file <path>')
       process.exit(1)
     }
@@ -46,7 +50,8 @@ switch (command) {
     let jsSource: string
     if (args[1]) {
       jsSource = readFileSync(args[1], 'utf-8')
-    } else {
+    }
+    else {
       jsSource = readFileSync('/dev/stdin', 'utf-8')
     }
     const decoded = decode(jsSource)
@@ -61,11 +66,16 @@ switch (command) {
     const original = new TextDecoder().decode(msg)
     const roundTripped = new TextDecoder().decode(result)
     if (original === roundTripped) {
+      // eslint-disable-next-line no-console
       console.log('Round-trip OK!')
+      // eslint-disable-next-line no-console
       console.log(`  Input:   "${original}"`)
+      // eslint-disable-next-line no-console
       console.log(`  JS size: ${js.length} chars`)
+      // eslint-disable-next-line no-console
       console.log(`  Output:  "${roundTripped}"`)
-    } else {
+    }
+    else {
       console.error('Round-trip FAILED!')
       console.error(`  Input:  "${original}"`)
       console.error(`  Output: "${roundTripped}"`)

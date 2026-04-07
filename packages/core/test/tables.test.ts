@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
-  initialContext,
-  filterCandidates,
-  buildTable,
   buildReverseTable,
+  buildTable,
+  filterCandidates,
+  initialContext,
 } from '../src/context'
 
 describe('dynamic table generation', () => {
@@ -35,7 +35,8 @@ describe('dynamic table generation', () => {
     // At least some entries should differ
     let diffs = 0
     for (let i = 0; i < 256; i++) {
-      if (t1[i].key !== t2[i].key) diffs++
+      if (t1[i].key !== t2[i].key)
+        diffs++
     }
     expect(diffs).toBeGreaterThan(50) // should be significantly shuffled
   })
