@@ -364,15 +364,16 @@ export function filterCandidates(ctx: EncodingContext): Candidate[] {
     }
 
     // Depth-based weight scaling: as depth approaches maxExprDepth,
-    // heavily bias toward leaves to keep AST shallow
+    // aggressively bias toward leaves to keep AST shallow.
+    // The weight ratio between leaf and non-leaf grows exponentially.
     if (ctx.exprDepth > 0 && ctx.maxExprDepth < Infinity) {
       const depthRatio = ctx.exprDepth / ctx.maxExprDepth // 0..1+
       if (c.children.length === 0) {
-        // Leaves get exponentially heavier near the limit
-        w *= 1 + depthRatio * 20
+        // Leaves get exponentially heavier
+        w *= Math.pow(10, depthRatio * 4) // at ratio 1.0: 10000x
       } else {
         // Non-leaves get exponentially lighter
-        w *= Math.max(0.01, 1 - depthRatio * 0.9)
+        w *= Math.pow(0.1, depthRatio * 4) // at ratio 1.0: 0.0001x
       }
     }
 
