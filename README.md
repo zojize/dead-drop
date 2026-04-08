@@ -83,16 +83,19 @@ becomes available for future Identifier references and assignment LHS.
 
 ### Table construction
 
-At each byte position:
+At each position:
 
 1. **Filter** the candidate pool (~300 entries) by current context
 2. **Weight** entries — leaves × 4, declarations × 2, heavy compounds × 0.5
-3. **Select** 256 unique entries (bijective — each byte maps to exactly one candidate)
-4. **Shuffle** deterministically using a running structural hash
+3. **Size** the table: `2^floor(log2(N))` where N = unique candidates
+4. **Select** that many unique entries (bijective — each value maps to exactly one candidate)
+5. **Shuffle** deterministically using a running structural hash
 
-The hash mixes in each consumed byte: `hash = mix(hash, byte)`. Since
-encoder and decoder process the same byte sequence, their hashes are
-always in sync.
+The encoder/decoder read/write variable-width values (not always full
+bytes). When the context has 300+ candidates, the table is 256 entries
+(8 bits). At max expression depth with ~12 leaf types, it shrinks to
+8 entries (3 bits). Both sides compute the same bit width from context,
+so the bitstream stays in sync.
 
 ### Structural variants
 
@@ -101,7 +104,7 @@ values (identifier names, strings, numbers) are cosmetic:
 
 | Category | Structural property | Entries |
 | --- | --- | --- |
-| RegExpLiteral | flag combo (d,g,i,m,s,u → 2^6) | 64 |
+| RegExpLiteral | node type alone | 1 |
 | Binary/Logical/Assign/Unary ops | `.operator` | 42 |
 | Call/New/Array/Object/Sequence | child count | 82 |
 | Arrow/Function expressions | `.params.length` | 32 |
