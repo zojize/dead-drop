@@ -151,6 +151,9 @@ export function Playground() {
           onChange={e => setInput(e.target.value)}
           placeholder="Start typing..."
           spellCheck={false}
+          data-gramm="false"
+          data-gramm_editor="false"
+          data-enable-grammarly="false"
           autoFocus
         />
         <div className="sp-footer">
@@ -222,6 +225,9 @@ export function Playground() {
           onChange={e => setEncoded(e.target.value)}
           placeholder="// or paste JS here to decode..."
           spellCheck={false}
+          data-gramm="false"
+          data-gramm_editor="false"
+          data-enable-grammarly="false"
         />
         <div className="sp-footer">
           {decoded && (
