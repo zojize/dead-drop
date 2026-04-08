@@ -1,7 +1,7 @@
 {
   "name": "@zojize/dead-drop",
   "type": "module",
-  "version": "4.0.0",
+  "version": "4.0.1",
   "description": "Steganographic message encoding via JavaScript ASTs",
   "author": "Jeff Zou",
   "license": "MIT",
@@ -31,7 +31,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "bun run build && bun run test"
+    "prepublishOnly": "cp ../../README.md . && bun run build && bun run test"
   },
   "dependencies": {
     "@babel/parser": "^7.29.2",
