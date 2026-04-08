@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  bitWidth,
   buildReverseTable,
   buildTable,
   filterCandidates,
@@ -7,23 +8,25 @@ import {
 } from '../src/context'
 
 describe('dynamic table generation', () => {
-  it('builds a 256-entry table from candidates', () => {
+  it('builds a power-of-2 table from candidates', () => {
     const ctx = initialContext()
     const candidates = filterCandidates(ctx)
     const table = buildTable(candidates, 0)
-    expect(table.length).toBe(256)
+    // Table size is 2^bitWidth(uniqueCount)
+    const bits = bitWidth(table.length)
+    expect(table.length).toBe(1 << bits)
+    expect(table.length).toBeGreaterThanOrEqual(128)
   })
 
-  it('reverse table maps candidate keys back to bytes', () => {
+  it('reverse table maps candidate keys back to indices', () => {
     const ctx = initialContext()
     const candidates = filterCandidates(ctx)
     const table = buildTable(candidates, 42)
     const rev = buildReverseTable(table)
-    // Every key in reverse table should point to a valid byte
-    for (const [key, byte] of rev) {
-      expect(byte).toBeGreaterThanOrEqual(0)
-      expect(byte).toBeLessThan(256)
-      expect(table[byte].key).toBe(key)
+    for (const [key, idx] of rev) {
+      expect(idx).toBeGreaterThanOrEqual(0)
+      expect(idx).toBeLessThan(table.length)
+      expect(table[idx].key).toBe(key)
     }
   })
 
@@ -32,13 +35,13 @@ describe('dynamic table generation', () => {
     const candidates = filterCandidates(ctx)
     const t1 = buildTable(candidates, 0)
     const t2 = buildTable(candidates, 12345)
-    // At least some entries should differ
+    const len = Math.min(t1.length, t2.length)
     let diffs = 0
-    for (let i = 0; i < 256; i++) {
+    for (let i = 0; i < len; i++) {
       if (t1[i].key !== t2[i].key)
         diffs++
     }
-    expect(diffs).toBeGreaterThan(50) // should be significantly shuffled
+    expect(diffs).toBeGreaterThan(50)
   })
 
   it('expression-only context excludes statements', () => {

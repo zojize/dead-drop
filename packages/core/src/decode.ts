@@ -4,9 +4,10 @@ import { parse } from '@babel/parser'
 import {
   ASSIGN_OPS,
   BINARY_OPS,
+  bitWidth,
+  BitWriter,
   buildReverseTable,
   buildTable,
-
   filterCandidates,
   inferTypeFromKey,
   initialContext,
@@ -14,7 +15,6 @@ import {
   MAX_EXPR_DEPTH,
   mixHash,
   nameFromHash,
-  REGEXP_FLAGS,
   UNARY_OPS,
 } from './context'
 
@@ -27,7 +27,6 @@ type WorkItem
     | { kind: 'stmt', node: t.Node }
     | { kind: 'block', stmts: readonly t.Statement[] }
     | { kind: 'block-depth-dec' }
-    | { kind: 'byte', value: number }
     | { kind: 'scope-save', scope: string[], typedScope: any[], inFunction: boolean }
     | { kind: 'scope-restore', scope: string[], typedScope: any[], inFunction: boolean }
     | { kind: 'var-decl', name: string, initNode: t.Node, depth: number }
@@ -40,7 +39,7 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
     plugins: [['optionalChainingAssign', { version: '2023-07' }]],
   })
 
-  const bytes: number[] = []
+  const out = new BitWriter()
   let hash = 0xDEADD
   const ctx: EncodingContext = { ...initialContext(), maxExprDepth: options?.maxExprDepth ?? MAX_EXPR_DEPTH }
   const work: WorkItem[] = []
@@ -55,15 +54,7 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
       case 'BooleanLiteral': return `BooleanLiteral:${node.value ? 1 : 0}`
       case 'NullLiteral': return 'NullLiteral:0'
       case 'ThisExpression': return 'ThisExpression:0'
-      case 'RegExpLiteral': {
-        let bitmask = 0
-        const flags = (node as t.RegExpLiteral).flags
-        for (let i = 0; i < REGEXP_FLAGS.length; i++) {
-          if (flags.includes(REGEXP_FLAGS[i]))
-            bitmask |= (1 << i)
-        }
-        return `RegExpLiteral:${bitmask}`
-      }
+      case 'RegExpLiteral': return 'RegExpLiteral:0'
       case 'BinaryExpression': return `BinaryExpression:${(BINARY_OPS as readonly string[]).indexOf(node.operator)}`
       case 'LogicalExpression': return `LogicalExpression:${(LOGICAL_OPS as readonly string[]).indexOf(node.operator)}`
       case 'AssignmentExpression': return `AssignmentExpression:${(ASSIGN_OPS as readonly string[]).indexOf(node.operator)}`
@@ -330,15 +321,16 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         const exprCtx = { ...ctx, expressionOnly: true, exprDepth: item.depth }
         const candidates = filterCandidates(exprCtx)
         const table = buildTable(candidates, hash)
+        const bits = bitWidth(table.length)
         const rev = buildReverseTable(table)
         const key = exprKey(item.node)
-        const byte = rev.get(key)
-        if (byte !== undefined) {
-          bytes.push(byte)
-          hash = mixHash(hash, byte)
+        const value = rev.get(key)
+        if (value !== undefined) {
+          out.write(value, bits)
+          hash = mixHash(hash, value)
         }
         else {
-          bytes.push(0)
+          out.write(0, bits)
           hash = mixHash(hash, 0)
         }
         // At max depth, children are cosmetic — don't recurse
@@ -351,20 +343,19 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
       case 'stmt': {
         const candidates = filterCandidates(ctx)
         const table = buildTable(candidates, hash)
+        const bits = bitWidth(table.length)
         const rev = buildReverseTable(table)
         // ExpressionStatement: always use the inner expression's key
-        // (ExpressionStatement:0 is not a candidate — expression candidates
-        // in statement context are wrapped in ExpressionStatement automatically)
         const key = item.node.type === 'ExpressionStatement'
           ? exprKey((item.node as t.ExpressionStatement).expression)
           : stmtKey(item.node)
-        const byte = rev.get(key)
-        if (byte !== undefined) {
-          bytes.push(byte)
-          hash = mixHash(hash, byte)
+        const value = rev.get(key)
+        if (value !== undefined) {
+          out.write(value, bits)
+          hash = mixHash(hash, value)
         }
         else {
-          bytes.push(0)
+          out.write(0, bits)
           hash = mixHash(hash, 0)
         }
         pushStmtChildren(item.node)
@@ -372,7 +363,7 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
       }
 
       case 'block': {
-        bytes.push(item.stmts.length)
+        out.write(item.stmts.length, 8)
         hash = mixHash(hash, item.stmts.length)
         ctx.blockDepth++
         work.push({ kind: 'block-depth-dec' })
@@ -397,10 +388,6 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         ctx.typedScope.push({ name: item.name, type: item.type as any })
         break
 
-      case 'byte':
-        bytes.push(item.value)
-        break
-
       case 'scope-save':
         for (const p of item.scope) ctx.scope.push(p)
         for (const e of item.typedScope) ctx.typedScope.push(e)
@@ -418,15 +405,16 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         const exprCtx = { ...ctx, expressionOnly: true, exprDepth: item.depth }
         const candidates = filterCandidates(exprCtx)
         const table = buildTable(candidates, hash)
+        const bits = bitWidth(table.length)
         const rev = buildReverseTable(table)
         const key = exprKey(item.initNode)
-        const byte = rev.get(key)
-        if (byte !== undefined) {
-          bytes.push(byte)
-          hash = mixHash(hash, byte)
+        const value = rev.get(key)
+        if (value !== undefined) {
+          out.write(value, bits)
+          hash = mixHash(hash, value)
         }
         else {
-          bytes.push(0)
+          out.write(0, bits)
           hash = mixHash(hash, 0)
         }
         // Defer typed scope push: children must see scope BEFORE this variable's type
@@ -441,6 +429,8 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
     }
   }
 
+  // Convert recovered bits back to bytes
+  const bytes = out.toBytes()
   if (bytes.length < 4)
     return new Uint8Array(0)
   const payloadLength = ((bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3]) >>> 0

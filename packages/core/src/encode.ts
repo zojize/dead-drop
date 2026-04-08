@@ -4,6 +4,8 @@ import { generateCompact } from './codegen'
 import {
   ASSIGN_OPS,
   BINARY_OPS,
+  bitWidth,
+  BitWriter,
   buildTable,
 
   filterCandidates,
@@ -14,7 +16,6 @@ import {
   MAX_EXPR_DEPTH,
   mixHash,
   nameFromHash,
-  REGEXP_FLAGS,
   UNARY_OPS,
   UPDATE_OPS,
 } from './context'
@@ -40,6 +41,7 @@ const VAR_KINDS = ['var', 'let', 'const'] as const
 export function encode(message: Uint8Array, options?: EncodeOptions): string {
   const opts = options ?? {}
   const length = message.length
+  // Prefix: 4-byte big-endian length, then payload
   const prefixed = new Uint8Array(4 + length)
   prefixed[0] = (length >>> 24) & 0xFF
   prefixed[1] = (length >>> 16) & 0xFF
@@ -47,14 +49,31 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
   prefixed[3] = length & 0xFF
   prefixed.set(message, 4)
 
-  let cursor = 0
+  // Convert to a bitstream for variable-width reads
+  const writer = new BitWriter()
+  // Write all prefixed bytes as 8-bit values into the writer (source bits)
+  for (let i = 0; i < prefixed.length; i++)
+    writer.write(prefixed[i], 8)
+  const allBits = writer.toBytes()
+  // Now read from allBits as a bitstream
+  const totalBits = prefixed.length * 8
+  let bitPos = 0
+
   let hash = 0xDEADD
   const rng = createRng(opts.seed ?? length)
   const ctx: EncodingContext = { ...initialContext(), maxExprDepth: opts.maxExprDepth ?? MAX_EXPR_DEPTH }
-  const isPad = () => cursor >= prefixed.length
+  const isPad = () => bitPos >= totalBits
 
-  function readByte(): number {
-    return prefixed[cursor++]
+  /** Read `width` bits from the input bitstream. */
+  function readBits(width: number): number {
+    let value = 0
+    for (let i = 0; i < width; i++) {
+      const byteIdx = bitPos >>> 3
+      const bitIdx = 7 - (bitPos & 7)
+      value = (value << 1) | ((allBits[byteIdx] >>> bitIdx) & 1)
+      bitPos++
+    }
+    return value
   }
 
   function cosmeticIdent(): string {
@@ -73,11 +92,12 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
     for (let i = 0; i < len; i++) s += chars[rng() % chars.length]
     return s
   }
-  function flagsString(bitmask: number): string {
+  function cosmeticFlags(): string {
+    const FLAGS = 'dgimsuy'
     let s = ''
-    for (let i = 0; i < REGEXP_FLAGS.length; i++) {
-      if (bitmask & (1 << i))
-        s += REGEXP_FLAGS[i]
+    for (let i = 0; i < FLAGS.length; i++) {
+      if (rng() % 3 === 0)
+        s += FLAGS[i]
     }
     return s
   }
@@ -101,12 +121,13 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
     if (isPad())
       return { node: padLeafExpr(), candidate: null }
 
-    const byte = readByte()
     const exprCtx = { ...ctx, expressionOnly: true, exprDepth: depth }
     const candidates = filterCandidates(exprCtx)
     const table = buildTable(candidates, hash)
-    const c = table[byte]
-    hash = mixHash(hash, byte)
+    const bits = bitWidth(table.length)
+    const value = readBits(bits)
+    const c = table[value]
+    hash = mixHash(hash, value)
 
     const cosmetic = ctx.maxExprDepth < Infinity && depth >= ctx.maxExprDepth
     const node = buildExprNode(c, depth, cosmetic)
@@ -123,7 +144,7 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
       case 'Identifier': return t.identifier(cosmeticIdent())
       case 'BooleanLiteral': return t.booleanLiteral(c.variant === 1)
       case 'NullLiteral': return t.nullLiteral()
-      case 'RegExpLiteral': return t.regExpLiteral(cosmeticString(), flagsString(c.variant))
+      case 'RegExpLiteral': return t.regExpLiteral(cosmeticString(), cosmeticFlags())
       case 'ThisExpression': return t.thisExpression()
       case 'BinaryExpression':
         return t.binaryExpression(BINARY_OPS[c.variant] as any, child(), child())
@@ -324,7 +345,7 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
   function buildBlock(): t.Statement[] {
     if (isPad())
       return []
-    const countByte = readByte()
+    const countByte = readBits(8)
     hash = mixHash(hash, countByte)
     ctx.blockDepth++
     const stmts: t.Statement[] = []
@@ -337,16 +358,17 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
   function buildTopLevel(): t.Statement {
     if (isPad())
       return t.expressionStatement(padLeafExpr())
-    const byte = readByte()
     const candidates = filterCandidates(ctx)
     const table = buildTable(candidates, hash)
-    const c = table[byte]
-    hash = mixHash(hash, byte)
+    const bits = bitWidth(table.length)
+    const value = readBits(bits)
+    const c = table[value]
+    hash = mixHash(hash, value)
     return buildStatement(c)
   }
 
   const body: t.Statement[] = []
-  while (cursor < prefixed.length)
+  while (!isPad())
     body.push(buildTopLevel())
   return generateCompact(t.program(body))
 }
