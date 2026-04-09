@@ -5,8 +5,10 @@ import { decode as _decode } from './decode'
 import { encode as _encode } from './encode'
 
 export interface CodecOptions {
-  /** Seed for cosmetic PRNG. Affects names/numbers/strings but not decoded data. */
+  /** Cosmetic seed — affects names/strings/numbers but not decoded data. */
   seed?: number
+  /** Structural key — affects candidate selection. Both encode and decode must agree. */
+  key?: number
   /**
    * Max expression nesting depth. Limits AST depth to keep output parseable
    *  by recursive-descent parsers. Default: Infinity (no limit).
@@ -21,13 +23,13 @@ export interface Codec {
 
 /**
  * Create an encoder/decoder pair with shared configuration.
- * Both sides agree on structural parameters (maxExprDepth).
+ * Both sides agree on key and maxExprDepth.
  */
 export function createCodec(options: CodecOptions = {}): Codec {
-  const { seed, maxExprDepth = MAX_EXPR_DEPTH } = options
+  const { seed, key, maxExprDepth = MAX_EXPR_DEPTH } = options
   return {
-    encode: (message: Uint8Array) => _encode(message, { seed, maxExprDepth }),
-    decode: (jsSource: string) => _decode(jsSource, { maxExprDepth }),
+    encode: (message: Uint8Array) => _encode(message, { seed, key, maxExprDepth }),
+    decode: (jsSource: string) => _decode(jsSource, { key, maxExprDepth }),
   }
 }
 

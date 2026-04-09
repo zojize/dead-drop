@@ -137,22 +137,32 @@ describe('fuzz', () => {
       expect(Array.from(out)).toEqual(Array.from(data))
     }
   })
+
+  it('key affects candidate selection — decode needs matching key', () => {
+    const msg = new TextEncoder().encode('hello world')
+    for (let key = 0; key < 20; key++) {
+      const js = encode(msg, { key })
+      const out = decode(js, { key })
+      expect(Array.from(out)).toEqual(Array.from(msg))
+    }
+  })
+
+  it('different keys produce different output', () => {
+    const msg = new TextEncoder().encode('hello world')
+    const outputs = new Set<string>()
+    for (let key = 0; key < 20; key++) {
+      outputs.add(encode(msg, { key }))
+    }
+    expect(outputs.size).toBe(20)
+  })
 })
 
 // ─── Data-in-AST invariant tests ────────────────────────────────────────────
 // Confirm that ALL expression data is encoded in the AST structure, not in
-// literal values. The decoder takes ONLY a string — no pools, no options.
-// Encoding with different seeds (which changes cosmetic values like identifier
-// names, numbers, strings) must always decode to the same bytes.
+// literal values. Seed is cosmetic only — decode never needs the seed.
+// Encoding with different seeds must always decode to the same bytes.
 
 describe('data lives in AST structure, not literal values', () => {
-  it('decode signature takes only a string', () => {
-    const js = encode(new TextEncoder().encode('test'))
-    // decode(jsSource: string): Uint8Array — no second param
-    const result = decode(js)
-    expect(result).toBeInstanceOf(Uint8Array)
-  })
-
   it('same message, different seeds -> same decoded bytes', () => {
     const msg = new TextEncoder().encode('the quick brown fox')
     for (let seed = 0; seed < 20; seed++) {
@@ -184,9 +194,6 @@ describe('data lives in AST structure, not literal values', () => {
   })
 
   it('cosmetic values do not affect decoding', () => {
-    // Encode the same message with many different seeds — all cosmetic
-    // values (identifier names, numbers, strings) will be different,
-    // but decode must always return the same bytes.
     const msg = new TextEncoder().encode('hello world')
     const expected = Array.from(msg)
     for (let seed = 0; seed < 50; seed++) {

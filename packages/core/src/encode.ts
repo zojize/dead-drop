@@ -21,7 +21,10 @@ import {
 } from './context'
 
 export interface EncodeOptions {
+  /** Cosmetic seed — affects names/strings/numbers but not decoded data. */
   seed?: number
+  /** Structural key — affects candidate selection. Decoder must receive the same key. */
+  key?: number
   maxExprDepth?: number
 }
 
@@ -59,7 +62,8 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
   const totalBits = prefixed.length * 8
   let bitPos = 0
 
-  let hash = 0xDEADD
+  const key = opts.key
+  let hash = key != null ? mixHash(0xDEADD, key) : 0xDEADD
   const rng = createRng(opts.seed ?? length)
   const ctx: EncodingContext = { ...initialContext(), maxExprDepth: opts.maxExprDepth ?? MAX_EXPR_DEPTH }
   const isPad = () => bitPos >= totalBits

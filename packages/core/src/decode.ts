@@ -19,6 +19,8 @@ import {
 } from './context'
 
 export interface DecodeOptions {
+  /** Structural key — must match the key used during encoding. */
+  key?: number
   maxExprDepth?: number
 }
 
@@ -40,7 +42,8 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
   })
 
   const out = new BitWriter()
-  let hash = 0xDEADD
+  const key = options?.key
+  let hash = key != null ? mixHash(0xDEADD, key) : 0xDEADD
   const ctx: EncodingContext = { ...initialContext(), maxExprDepth: options?.maxExprDepth ?? MAX_EXPR_DEPTH }
   const work: WorkItem[] = []
 
