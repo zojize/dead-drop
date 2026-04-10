@@ -86,7 +86,7 @@ becomes available for future Identifier references and assignment LHS.
 At each position:
 
 1. **Filter** the candidate pool (~300 entries) by current context
-2. **Weight** entries — leaves × 4, declarations × 2, heavy compounds × 0.5
+2. **Weight** entries using corpus-derived frequencies (22.8M nodes from 83 npm packages)
 3. **Size** the table: `2^floor(log2(N))` where N = unique candidates
 4. **Select** that many unique entries (bijective — each value maps to exactly one candidate)
 5. **Shuffle** deterministically using a running structural hash

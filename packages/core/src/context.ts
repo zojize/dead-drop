@@ -4,6 +4,7 @@
  *
  * Both encoder and decoder maintain identical context state.
  */
+import corpusWeights from './corpus-weights.json'
 
 // ─── Candidate Entry ────────────────────────────────────────────────────────
 
@@ -159,116 +160,122 @@ const UPDATE_OPS = ['++', '--'] as const
 const ASSIGN_OPS = ['=', '+=', '-=', '*=', '/=', '%=', '|=', '&=', '^=', '<<=', '>>=', '>>>=', '**=', '??=', '||=', '&&='] as const
 export { ASSIGN_OPS, BINARY_OPS, LOGICAL_OPS, UNARY_OPS, UPDATE_OPS }
 
+/** Corpus-derived weight for a candidate key. Falls back to 0.01 for unobserved keys. */
+const W = corpusWeights as Record<string, number>
+function w(key: string): number {
+  return W[key] ?? 0.01
+}
+
 /** Build the full candidate pool (all possible entries across all contexts). */
 function buildAllCandidates(): Candidate[] {
   const c: Candidate[] = []
 
   // ── Expression candidates (always available in expression context) ──
 
-  // Leaves (weight 4 — compact, realistic)
-  c.push({ key: 'NumericLiteral:0', nodeType: 'NumericLiteral', variant: 0, children: [], weight: 8, isStatement: false })
-  c.push({ key: 'StringLiteral:0', nodeType: 'StringLiteral', variant: 0, children: [], weight: 8, isStatement: false })
-  c.push({ key: 'Identifier:0', nodeType: 'Identifier', variant: 0, children: [], weight: 8, isStatement: false })
-  c.push({ key: 'BooleanLiteral:1', nodeType: 'BooleanLiteral', variant: 1, children: [], weight: 8, isStatement: false })
-  c.push({ key: 'BooleanLiteral:0', nodeType: 'BooleanLiteral', variant: 0, children: [], weight: 8, isStatement: false })
-  c.push({ key: 'NullLiteral:0', nodeType: 'NullLiteral', variant: 0, children: [], weight: 8, isStatement: false })
-  c.push({ key: 'BigIntLiteral:0', nodeType: 'BigIntLiteral', variant: 0, children: [], weight: 6, isStatement: false })
-  c.push({ key: 'ThisExpression:0', nodeType: 'ThisExpression', variant: 0, children: [], weight: 6, isStatement: false })
+  // Leaves
+  c.push({ key: 'NumericLiteral:0', nodeType: 'NumericLiteral', variant: 0, children: [], weight: w('NumericLiteral:0'), isStatement: false })
+  c.push({ key: 'StringLiteral:0', nodeType: 'StringLiteral', variant: 0, children: [], weight: w('StringLiteral:0'), isStatement: false })
+  c.push({ key: 'Identifier:0', nodeType: 'Identifier', variant: 0, children: [], weight: w('Identifier:0'), isStatement: false })
+  c.push({ key: 'BooleanLiteral:1', nodeType: 'BooleanLiteral', variant: 1, children: [], weight: w('BooleanLiteral:1'), isStatement: false })
+  c.push({ key: 'BooleanLiteral:0', nodeType: 'BooleanLiteral', variant: 0, children: [], weight: w('BooleanLiteral:0'), isStatement: false })
+  c.push({ key: 'NullLiteral:0', nodeType: 'NullLiteral', variant: 0, children: [], weight: w('NullLiteral:0'), isStatement: false })
+  c.push({ key: 'BigIntLiteral:0', nodeType: 'BigIntLiteral', variant: 0, children: [], weight: w('BigIntLiteral:0'), isStatement: false })
+  c.push({ key: 'ThisExpression:0', nodeType: 'ThisExpression', variant: 0, children: [], weight: w('ThisExpression:0'), isStatement: false })
 
   // RegExpLiteral — single leaf entry (flags are cosmetic, randomized by encoder)
-  c.push({ key: 'RegExpLiteral:0', nodeType: 'RegExpLiteral', variant: 0, children: [], weight: 6, isStatement: false })
+  c.push({ key: 'RegExpLiteral:0', nodeType: 'RegExpLiteral', variant: 0, children: [], weight: w('RegExpLiteral:0'), isStatement: false })
 
   // Binary operators (weight 1, 2 children)
   for (let i = 0; i < BINARY_OPS.length; i++) {
-    c.push({ key: `BinaryExpression:${i}`, nodeType: 'BinaryExpression', variant: i, children: ['expr', 'expr'], weight: 1, isStatement: false })
+    c.push({ key: `BinaryExpression:${i}`, nodeType: 'BinaryExpression', variant: i, children: ['expr', 'expr'], weight: w(`BinaryExpression:${i}`), isStatement: false })
   }
 
   // Logical operators (weight 1, 2 children)
   for (let i = 0; i < LOGICAL_OPS.length; i++) {
-    c.push({ key: `LogicalExpression:${i}`, nodeType: 'LogicalExpression', variant: i, children: ['expr', 'expr'], weight: 1, isStatement: false })
+    c.push({ key: `LogicalExpression:${i}`, nodeType: 'LogicalExpression', variant: i, children: ['expr', 'expr'], weight: w(`LogicalExpression:${i}`), isStatement: false })
   }
 
   // Assignment operators (weight 1, 1 child — LHS is cosmetic)
   for (let i = 0; i < ASSIGN_OPS.length; i++) {
-    c.push({ key: `AssignmentExpression:${i}`, nodeType: 'AssignmentExpression', variant: i, children: ['expr'], weight: 1, isStatement: false })
+    c.push({ key: `AssignmentExpression:${i}`, nodeType: 'AssignmentExpression', variant: i, children: ['expr'], weight: w(`AssignmentExpression:${i}`), isStatement: false })
   }
 
   // Unary operators (weight 1.5, 1 child)
   for (let i = 0; i < UNARY_OPS.length; i++) {
-    c.push({ key: `UnaryExpression:${i}`, nodeType: 'UnaryExpression', variant: i, children: ['expr'], weight: 1.5, isStatement: false })
+    c.push({ key: `UnaryExpression:${i}`, nodeType: 'UnaryExpression', variant: i, children: ['expr'], weight: w(`UnaryExpression:${i}`), isStatement: false })
   }
 
   // Update operators (weight 1.5, 1 child — 4 combos: ++/-- × prefix/postfix)
   for (let i = 0; i < 4; i++) {
-    c.push({ key: `UpdateExpression:${i}`, nodeType: 'UpdateExpression', variant: i, children: [], weight: 1.5, isStatement: false })
+    c.push({ key: `UpdateExpression:${i}`, nodeType: 'UpdateExpression', variant: i, children: [], weight: w(`UpdateExpression:${i}`), isStatement: false })
   }
 
   // Conditional (weight 0.8, 3 children)
-  c.push({ key: 'ConditionalExpression:0', nodeType: 'ConditionalExpression', variant: 0, children: ['expr', 'expr', 'expr'], weight: 0.8, isStatement: false })
+  c.push({ key: 'ConditionalExpression:0', nodeType: 'ConditionalExpression', variant: 0, children: ['expr', 'expr', 'expr'], weight: w('ConditionalExpression:0'), isStatement: false })
 
   // Call/New expression — arg count as variant (type-gated: only when scope has callable/constructable)
   for (let n = 0; n < 19; n++) {
     const ch: SlotKind[] = ['expr', ...Array.from<SlotKind>({ length: n }).fill('expr')]
-    c.push({ key: `CallExpression:${n}`, nodeType: 'CallExpression', variant: n, children: ch, weight: n <= 3 ? 1.5 : n <= 8 ? 0.8 : 0.4, isStatement: false })
+    c.push({ key: `CallExpression:${n}`, nodeType: 'CallExpression', variant: n, children: ch, weight: w(`CallExpression:${n}`), isStatement: false })
   }
   for (let n = 0; n < 16; n++) {
     const ch: SlotKind[] = ['expr', ...Array.from<SlotKind>({ length: n }).fill('expr')]
-    c.push({ key: `NewExpression:${n}`, nodeType: 'NewExpression', variant: n, children: ch, weight: n <= 3 ? 1.2 : 0.5, isStatement: false })
+    c.push({ key: `NewExpression:${n}`, nodeType: 'NewExpression', variant: n, children: ch, weight: w(`NewExpression:${n}`), isStatement: false })
   }
 
   // OptionalCallExpression — type-gated: expr?.(args) throws if expr is non-null non-callable
   for (let n = 0; n < 19; n++) {
     const ch: SlotKind[] = ['expr', ...Array.from<SlotKind>({ length: n }).fill('expr')]
-    c.push({ key: `OptionalCallExpression:${n}`, nodeType: 'OptionalCallExpression', variant: n, children: ch, weight: n <= 3 ? 1.2 : n <= 8 ? 0.6 : 0.3, isStatement: false })
+    c.push({ key: `OptionalCallExpression:${n}`, nodeType: 'OptionalCallExpression', variant: n, children: ch, weight: w(`OptionalCallExpression:${n}`), isStatement: false })
   }
 
   // Member expressions (type-gated: only when scope has member-safe types)
-  c.push({ key: 'MemberExpression:0', nodeType: 'MemberExpression', variant: 0, children: ['expr'], weight: 1.5, isStatement: false })
-  c.push({ key: 'MemberExpression:1', nodeType: 'MemberExpression', variant: 1, children: ['expr', 'expr'], weight: 1, isStatement: false })
+  c.push({ key: 'MemberExpression:0', nodeType: 'MemberExpression', variant: 0, children: ['expr'], weight: w('MemberExpression:0'), isStatement: false })
+  c.push({ key: 'MemberExpression:1', nodeType: 'MemberExpression', variant: 1, children: ['expr', 'expr'], weight: w('MemberExpression:1'), isStatement: false })
   // OptionalMemberExpression — always safe (?.  never throws)
-  c.push({ key: 'OptionalMemberExpression:0', nodeType: 'OptionalMemberExpression', variant: 0, children: ['expr'], weight: 1, isStatement: false })
-  c.push({ key: 'OptionalMemberExpression:1', nodeType: 'OptionalMemberExpression', variant: 1, children: ['expr', 'expr'], weight: 0.8, isStatement: false })
+  c.push({ key: 'OptionalMemberExpression:0', nodeType: 'OptionalMemberExpression', variant: 0, children: ['expr'], weight: w('OptionalMemberExpression:0'), isStatement: false })
+  c.push({ key: 'OptionalMemberExpression:1', nodeType: 'OptionalMemberExpression', variant: 1, children: ['expr', 'expr'], weight: w('OptionalMemberExpression:1'), isStatement: false })
 
   // Array/Object — element/prop count (extended to 0-31 for more unique candidates)
   for (let n = 0; n < 32; n++) {
-    c.push({ key: `ArrayExpression:${n}`, nodeType: 'ArrayExpression', variant: n, children: Array.from<SlotKind>({ length: n }).fill('expr'), weight: n <= 3 ? 1.5 : n <= 8 ? 0.6 : 0.15, isStatement: false })
+    c.push({ key: `ArrayExpression:${n}`, nodeType: 'ArrayExpression', variant: n, children: Array.from<SlotKind>({ length: n }).fill('expr'), weight: w(`ArrayExpression:${n}`), isStatement: false })
   }
   for (let n = 0; n < 32; n++) {
     const ch: SlotKind[] = []
     for (let j = 0; j < n; j++) {
       ch.push('expr', 'expr')
     }
-    c.push({ key: `ObjectExpression:${n}`, nodeType: 'ObjectExpression', variant: n, children: ch, weight: n <= 3 ? 1.2 : n <= 8 ? 0.5 : 0.1, isStatement: false })
+    c.push({ key: `ObjectExpression:${n}`, nodeType: 'ObjectExpression', variant: n, children: ch, weight: w(`ObjectExpression:${n}`), isStatement: false })
   }
 
   // Sequence expression (count 2-29, extended range)
   for (let n = 2; n <= 29; n++) {
-    c.push({ key: `SequenceExpression:${n - 2}`, nodeType: 'SequenceExpression', variant: n - 2, children: Array.from<SlotKind>({ length: n }).fill('expr'), weight: n <= 4 ? 0.8 : 0.1, isStatement: false })
+    c.push({ key: `SequenceExpression:${n - 2}`, nodeType: 'SequenceExpression', variant: n - 2, children: Array.from<SlotKind>({ length: n }).fill('expr'), weight: w(`SequenceExpression:${n - 2}`), isStatement: false })
   }
 
   // Template literals (extended to 0-16)
   for (let n = 0; n < 17; n++) {
-    c.push({ key: `TemplateLiteral:${n}`, nodeType: 'TemplateLiteral', variant: n, children: Array.from<SlotKind>({ length: n }).fill('expr'), weight: n <= 2 ? 1 : 0.15, isStatement: false })
+    c.push({ key: `TemplateLiteral:${n}`, nodeType: 'TemplateLiteral', variant: n, children: Array.from<SlotKind>({ length: n }).fill('expr'), weight: w(`TemplateLiteral:${n}`), isStatement: false })
   }
   // TaggedTemplateExpression (type-gated: tag must be callable)
   for (let n = 0; n < 8; n++) {
-    c.push({ key: `TaggedTemplateExpression:${n}`, nodeType: 'TaggedTemplateExpression', variant: n, children: ['expr', ...Array.from<SlotKind>({ length: n }).fill('expr')], weight: n <= 2 ? 0.8 : 0.3, isStatement: false })
+    c.push({ key: `TaggedTemplateExpression:${n}`, nodeType: 'TaggedTemplateExpression', variant: n, children: ['expr', ...Array.from<SlotKind>({ length: n }).fill('expr')], weight: w(`TaggedTemplateExpression:${n}`), isStatement: false })
   }
 
   // Arrow/Function expression — param count (extended to 0-23)
   for (let n = 0; n < 24; n++) {
-    c.push({ key: `ArrowFunctionExpression:${n}`, nodeType: 'ArrowFunctionExpression', variant: n, children: ['expr'], weight: n <= 3 ? 1 : 0.15, isStatement: false })
+    c.push({ key: `ArrowFunctionExpression:${n}`, nodeType: 'ArrowFunctionExpression', variant: n, children: ['expr'], weight: w(`ArrowFunctionExpression:${n}`), isStatement: false })
   }
   for (let n = 0; n < 24; n++) {
-    c.push({ key: `FunctionExpression:${n}`, nodeType: 'FunctionExpression', variant: n, children: ['expr'], weight: n <= 3 ? 0.8 : 0.15, isStatement: false })
+    c.push({ key: `FunctionExpression:${n}`, nodeType: 'FunctionExpression', variant: n, children: ['expr'], weight: w(`FunctionExpression:${n}`), isStatement: false })
   }
 
   // SpreadElement (weight 0.5)
-  c.push({ key: 'SpreadElement:0', nodeType: 'SpreadElement', variant: 0, children: ['expr'], weight: 0.5, isStatement: false })
+  c.push({ key: 'SpreadElement:0', nodeType: 'SpreadElement', variant: 0, children: ['expr'], weight: w('SpreadElement:0'), isStatement: false })
 
   // ClassExpression (weight 0.3)
-  c.push({ key: 'ClassExpression:0', nodeType: 'ClassExpression', variant: 0, children: [], weight: 0.3, isStatement: false })
-  c.push({ key: 'ClassExpression:1', nodeType: 'ClassExpression', variant: 1, children: ['expr'], weight: 0.3, isStatement: false })
+  c.push({ key: 'ClassExpression:0', nodeType: 'ClassExpression', variant: 0, children: [], weight: w('ClassExpression:0'), isStatement: false })
+  c.push({ key: 'ClassExpression:1', nodeType: 'ClassExpression', variant: 1, children: ['expr'], weight: w('ClassExpression:1'), isStatement: false })
 
   // ── Statement candidates (only available in statement context) ──
 
@@ -278,16 +285,16 @@ function buildAllCandidates(): Candidate[] {
   // (can't distinguish "expression selected directly" from "ExpressionStatement selected + inner expr").
 
   // VariableDeclaration: var/let/const (weight 2)
-  c.push({ key: 'VariableDeclaration:0', nodeType: 'VariableDeclaration', variant: 0, children: ['expr'], weight: 2, isStatement: true }) // var
-  c.push({ key: 'VariableDeclaration:1', nodeType: 'VariableDeclaration', variant: 1, children: ['expr'], weight: 2, isStatement: true }) // let
-  c.push({ key: 'VariableDeclaration:2', nodeType: 'VariableDeclaration', variant: 2, children: ['expr'], weight: 2, isStatement: true }) // const
+  c.push({ key: 'VariableDeclaration:0', nodeType: 'VariableDeclaration', variant: 0, children: ['expr'], weight: w('VariableDeclaration:0'), isStatement: true }) // var
+  c.push({ key: 'VariableDeclaration:1', nodeType: 'VariableDeclaration', variant: 1, children: ['expr'], weight: w('VariableDeclaration:1'), isStatement: true }) // let
+  c.push({ key: 'VariableDeclaration:2', nodeType: 'VariableDeclaration', variant: 2, children: ['expr'], weight: w('VariableDeclaration:2'), isStatement: true }) // const
 
   // IfStatement: with/without else (weight 1.5)
-  c.push({ key: 'IfStatement:0', nodeType: 'IfStatement', variant: 0, children: ['expr', 'block', 'block'], weight: 1.5, isStatement: true })
-  c.push({ key: 'IfStatement:1', nodeType: 'IfStatement', variant: 1, children: ['expr', 'block'], weight: 1.5, isStatement: true })
+  c.push({ key: 'IfStatement:0', nodeType: 'IfStatement', variant: 0, children: ['expr', 'block', 'block'], weight: w('IfStatement:0'), isStatement: true })
+  c.push({ key: 'IfStatement:1', nodeType: 'IfStatement', variant: 1, children: ['expr', 'block'], weight: w('IfStatement:1'), isStatement: true })
 
   // WhileStatement (weight 1)
-  c.push({ key: 'WhileStatement:0', nodeType: 'WhileStatement', variant: 0, children: ['expr', 'block'], weight: 1, isStatement: true })
+  c.push({ key: 'WhileStatement:0', nodeType: 'WhileStatement', variant: 0, children: ['expr', 'block'], weight: w('WhileStatement:0'), isStatement: true })
 
   // ForStatement × 8 null combos (weight 0.8)
   for (let v = 0; v < 8; v++) {
@@ -299,17 +306,17 @@ function buildAllCandidates(): Candidate[] {
     if (v & 4)
       ch.push('expr')
     ch.push('block')
-    c.push({ key: `ForStatement:${v}`, nodeType: 'ForStatement', variant: v, children: ch, weight: 0.8, isStatement: true })
+    c.push({ key: `ForStatement:${v}`, nodeType: 'ForStatement', variant: v, children: ch, weight: w(`ForStatement:${v}`), isStatement: true })
   }
 
   // DoWhileStatement (weight 0.8)
-  c.push({ key: 'DoWhileStatement:0', nodeType: 'DoWhileStatement', variant: 0, children: ['expr', 'block'], weight: 0.8, isStatement: true })
+  c.push({ key: 'DoWhileStatement:0', nodeType: 'DoWhileStatement', variant: 0, children: ['expr', 'block'], weight: w('DoWhileStatement:0'), isStatement: true })
 
   // BlockStatement (weight 0.5)
-  c.push({ key: 'BlockStatement:0', nodeType: 'BlockStatement', variant: 0, children: ['block'], weight: 0.5, isStatement: true })
+  c.push({ key: 'BlockStatement:0', nodeType: 'BlockStatement', variant: 0, children: ['block'], weight: w('BlockStatement:0'), isStatement: true })
 
   // TryStatement (weight 0.5)
-  c.push({ key: 'TryStatement:0', nodeType: 'TryStatement', variant: 0, children: ['block', 'block'], weight: 0.5, isStatement: true })
+  c.push({ key: 'TryStatement:0', nodeType: 'TryStatement', variant: 0, children: ['block', 'block'], weight: w('TryStatement:0'), isStatement: true })
 
   // SwitchStatement × case counts 0-15 (weight varies)
   for (let n = 0; n <= 15; n++) {
@@ -317,33 +324,33 @@ function buildAllCandidates(): Candidate[] {
     for (let j = 0; j < n; j++) {
       ch.push('expr', 'block')
     }
-    c.push({ key: `SwitchStatement:${n}`, nodeType: 'SwitchStatement', variant: n, children: ch, weight: n <= 3 ? 0.6 : 0.2, isStatement: true })
+    c.push({ key: `SwitchStatement:${n}`, nodeType: 'SwitchStatement', variant: n, children: ch, weight: w(`SwitchStatement:${n}`), isStatement: true })
   }
 
   // LabeledStatement (weight 0.5)
-  c.push({ key: 'LabeledStatement:0', nodeType: 'LabeledStatement', variant: 0, children: ['block'], weight: 0.5, isStatement: true })
+  c.push({ key: 'LabeledStatement:0', nodeType: 'LabeledStatement', variant: 0, children: ['block'], weight: w('LabeledStatement:0'), isStatement: true })
 
   // ThrowStatement (weight 0.5)
-  c.push({ key: 'ThrowStatement:0', nodeType: 'ThrowStatement', variant: 0, children: ['expr'], weight: 0.5, isStatement: true })
+  c.push({ key: 'ThrowStatement:0', nodeType: 'ThrowStatement', variant: 0, children: ['expr'], weight: w('ThrowStatement:0'), isStatement: true })
 
   // EmptyStatement (weight 0.25 — leaf)
-  c.push({ key: 'EmptyStatement:0', nodeType: 'EmptyStatement', variant: 0, children: [], weight: 0.25, isStatement: true })
+  c.push({ key: 'EmptyStatement:0', nodeType: 'EmptyStatement', variant: 0, children: [], weight: w('EmptyStatement:0'), isStatement: true })
 
   // DebuggerStatement (weight 0.25 — leaf)
-  c.push({ key: 'DebuggerStatement:0', nodeType: 'DebuggerStatement', variant: 0, children: [], weight: 0.25, isStatement: true })
+  c.push({ key: 'DebuggerStatement:0', nodeType: 'DebuggerStatement', variant: 0, children: [], weight: w('DebuggerStatement:0'), isStatement: true })
 
   // Context-gated statements (added dynamically):
   // ReturnStatement (weight 1, only in function)
-  c.push({ key: 'ReturnStatement:0', nodeType: 'ReturnStatement', variant: 0, children: ['expr'], weight: 1, isStatement: true })
+  c.push({ key: 'ReturnStatement:0', nodeType: 'ReturnStatement', variant: 0, children: ['expr'], weight: w('ReturnStatement:0'), isStatement: true })
 
   // BreakStatement (weight 0.3, only in loop)
-  c.push({ key: 'BreakStatement:0', nodeType: 'BreakStatement', variant: 0, children: [], weight: 0.3, isStatement: true })
+  c.push({ key: 'BreakStatement:0', nodeType: 'BreakStatement', variant: 0, children: [], weight: w('BreakStatement:0'), isStatement: true })
 
   // ContinueStatement (weight 0.3, only in loop)
-  c.push({ key: 'ContinueStatement:0', nodeType: 'ContinueStatement', variant: 0, children: [], weight: 0.3, isStatement: true })
+  c.push({ key: 'ContinueStatement:0', nodeType: 'ContinueStatement', variant: 0, children: [], weight: w('ContinueStatement:0'), isStatement: true })
 
   // AwaitExpression (weight 1, only in async function)
-  c.push({ key: 'AwaitExpression:0', nodeType: 'AwaitExpression', variant: 0, children: ['expr'], weight: 1, isStatement: false })
+  c.push({ key: 'AwaitExpression:0', nodeType: 'AwaitExpression', variant: 0, children: ['expr'], weight: w('AwaitExpression:0'), isStatement: false })
 
   return c
 }
