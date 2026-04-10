@@ -312,7 +312,8 @@ export function generateCompact(program: t.Program): string {
             raw(',')
           raw(params[i].name)
         }
-        raw('(function(')
+        const fnName = node.id ? ` ${node.id.name}` : ''
+        raw(`(function${fnName}(`)
         break
       }
       case 'ClassExpression': {
