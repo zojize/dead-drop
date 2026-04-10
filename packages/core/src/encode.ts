@@ -19,6 +19,7 @@ import {
   UNARY_OPS,
   UPDATE_OPS,
 } from './context'
+import cosmeticData from './cosmetic-data.json'
 
 export interface EncodeOptions {
   /** Cosmetic seed — affects names/strings/numbers but not decoded data. */
@@ -38,7 +39,11 @@ function createRng(seed: number) {
   }
 }
 
-const SAFE_IDENTS = ['undefined', 'NaN', 'Infinity', 'globalThis', 'Object', 'Array', 'String', 'Number', 'Boolean', 'Math', 'JSON', 'Date']
+const CORPUS_IDENTS = cosmeticData.identifiers as string[]
+const CORPUS_STRINGS = cosmeticData.strings as string[]
+const CORPUS_NUMBERS = cosmeticData.numbers as number[]
+const CORPUS_FUNC_NAMES = cosmeticData.functionNames as string[]
+const CORPUS_PROPS = cosmeticData.properties as string[]
 const VAR_KINDS = ['var', 'let', 'const'] as const
 
 export function encode(message: Uint8Array, options?: EncodeOptions): string {
@@ -84,17 +89,28 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
     if (ctx.typedScope.length > 0 && rng() % 3 === 0) {
       return ctx.typedScope[rng() % ctx.typedScope.length].name
     }
-    return SAFE_IDENTS[rng() % SAFE_IDENTS.length]
+    return CORPUS_IDENTS[rng() % CORPUS_IDENTS.length]
+  }
+  function cosmeticProp(): string {
+    return CORPUS_PROPS[rng() % CORPUS_PROPS.length]
   }
   function cosmeticNumber(): number {
-    return rng() % 1000
+    return CORPUS_NUMBERS[rng() % CORPUS_NUMBERS.length]
   }
   function cosmeticString(): string {
+    return CORPUS_STRINGS[rng() % CORPUS_STRINGS.length]
+  }
+  /** Template-safe string (no backticks, backslashes, or ${) */
+  function cosmeticTemplateRaw(): string {
     const chars = 'abcdefghijklmnopqrstuvwxyz'
     const len = 1 + (rng() % 4)
     let s = ''
-    for (let i = 0; i < len; i++) s += chars[rng() % chars.length]
+    for (let i = 0; i < len; i++)
+      s += chars[rng() % chars.length]
     return s
+  }
+  function cosmeticFuncName(): string {
+    return CORPUS_FUNC_NAMES[rng() % CORPUS_FUNC_NAMES.length]
   }
   function cosmeticFlags(): string {
     const FLAGS = 'dgimsuy'
@@ -148,7 +164,7 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
       case 'Identifier': return t.identifier(cosmeticIdent())
       case 'BooleanLiteral': return t.booleanLiteral(c.variant === 1)
       case 'NullLiteral': return t.nullLiteral()
-      case 'RegExpLiteral': return t.regExpLiteral(cosmeticString(), cosmeticFlags())
+      case 'RegExpLiteral': return t.regExpLiteral(cosmeticTemplateRaw(), cosmeticFlags())
       case 'ThisExpression': return t.thisExpression()
       case 'BinaryExpression':
         return t.binaryExpression(BINARY_OPS[c.variant] as any, child(), child())
@@ -186,11 +202,11 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
       case 'MemberExpression':
         if (c.variant === 1)
           return t.memberExpression(child(), child(), true)
-        return t.memberExpression(child(), t.identifier(cosmeticIdent()), false)
+        return t.memberExpression(child(), t.identifier(cosmeticProp()), false)
       case 'OptionalMemberExpression':
         if (c.variant === 1)
           return t.optionalMemberExpression(child(), child(), true, false)
-        return t.optionalMemberExpression(child(), t.identifier(cosmeticIdent()), false, false)
+        return t.optionalMemberExpression(child(), t.identifier(cosmeticProp()), false, false)
       case 'ArrayExpression':
         return t.arrayExpression(Array.from({ length: c.variant }, () => child()))
       case 'ObjectExpression': {
@@ -207,7 +223,7 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
       case 'TemplateLiteral': {
         const exprs = Array.from({ length: c.variant }, () => child())
         const quasis = Array.from({ length: c.variant + 1 }, (_, i) => {
-          const raw = cosmeticString()
+          const raw = cosmeticTemplateRaw()
           return t.templateElement({ raw, cooked: raw }, i === c.variant)
         })
         return t.templateLiteral(quasis, exprs)
@@ -216,7 +232,7 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         const tag = child()
         const exprs = Array.from({ length: c.variant }, () => child())
         const quasis = Array.from({ length: c.variant + 1 }, (_, i) => {
-          const raw = cosmeticString()
+          const raw = cosmeticTemplateRaw()
           return t.templateElement({ raw, cooked: raw }, i === c.variant)
         })
         return t.taggedTemplateExpression(tag, t.templateLiteral(quasis, exprs))
@@ -241,9 +257,10 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         return t.arrowFunctionExpression(paramNames.map(n => t.identifier(n)), body)
       }
       case 'FunctionExpression': {
+        const fnName = cosmeticFuncName()
         const paramNames = Array.from({ length: c.variant }, (_, i) => nameFromHash(hash, 900 + i))
         if (cosmeticChildren) {
-          return t.functionExpression(null, paramNames.map(n => t.identifier(n)), t.blockStatement([t.returnStatement(child())]))
+          return t.functionExpression(t.identifier(fnName), paramNames.map(n => t.identifier(n)), t.blockStatement([t.returnStatement(child())]))
         }
         const savedScope = [...ctx.scope]
         const savedTyped = [...ctx.typedScope]
@@ -257,7 +274,7 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         ctx.scope = savedScope
         ctx.typedScope = savedTyped
         ctx.inFunction = savedFn
-        return t.functionExpression(null, paramNames.map(n => t.identifier(n)), t.blockStatement([t.returnStatement(body)]))
+        return t.functionExpression(t.identifier(fnName), paramNames.map(n => t.identifier(n)), t.blockStatement([t.returnStatement(body)]))
       }
       case 'SpreadElement':
         return t.arrayExpression([t.spreadElement(child())])
