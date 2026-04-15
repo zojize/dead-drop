@@ -8,6 +8,7 @@ import {
   BitWriter,
   buildReverseTable,
   buildTable,
+  deriveScopeBucket,
   filterCandidates,
   inferTypeFromKey,
   initialContext,
@@ -15,6 +16,7 @@ import {
   MAX_EXPR_DEPTH,
   mixHash,
   nameFromHash,
+  type ScopeBucket,
   UNARY_OPS,
 } from './context'
 
@@ -35,6 +37,8 @@ type WorkItem
     | { kind: 'inloop-enter' }
     | { kind: 'inloop-exit', saved: boolean }
     | { kind: 'var-type-push', name: string, type: string }
+    | { kind: 'bucket-enter', bucket: ScopeBucket }
+    | { kind: 'bucket-exit', prev: ScopeBucket }
 
 export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
   const ast = parse(jsSource, {
@@ -193,11 +197,13 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         const n = node as t.ArrowFunctionExpression
         const params = n.params.map((_, i) => nameFromHash(hash, 900 + i))
         work.push({ kind: 'scope-restore', scope: [...ctx.scope], typedScope: [...ctx.typedScope], inFunction: ctx.inFunction })
+        work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
         const bodyNode = n.body.type === 'BlockStatement'
           ? ((n.body as t.BlockStatement).body[0] as t.ReturnStatement)?.argument
           : n.body
         if (bodyNode)
           work.push({ kind: 'expr', node: bodyNode, depth: d })
+        work.push({ kind: 'bucket-enter', bucket: 'function-body' })
         // Push scope-save AFTER body (LIFO: save executes first)
         work.push({ kind: 'scope-save', scope: params, typedScope: params.map(p => ({ name: p, type: 'any' })), inFunction: true })
         break
@@ -206,9 +212,11 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         const n = node as t.FunctionExpression
         const params = n.params.map((_, i) => nameFromHash(hash, 900 + i))
         work.push({ kind: 'scope-restore', scope: [...ctx.scope], typedScope: [...ctx.typedScope], inFunction: ctx.inFunction })
+        work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
         const ret = n.body.body[0]
         if (ret?.type === 'ReturnStatement')
           work.push({ kind: 'expr', node: (ret as t.ReturnStatement).argument!, depth: d })
+        work.push({ kind: 'bucket-enter', bucket: 'function-body' })
         work.push({ kind: 'scope-save', scope: params, typedScope: params.map(p => ({ name: p, type: 'any' })), inFunction: true })
         break
       }
@@ -240,26 +248,35 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
       }
       case 'IfStatement': {
         const n = node as t.IfStatement
-        if (n.alternate)
+        if (n.alternate) {
+          work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
           work.push({ kind: 'block', stmts: (n.alternate as t.BlockStatement).body })
+          work.push({ kind: 'bucket-enter', bucket: deriveScopeBucket('IfStatement', 'alternate') })
+        }
+        work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
         work.push({ kind: 'block', stmts: (n.consequent as t.BlockStatement).body })
+        work.push({ kind: 'bucket-enter', bucket: deriveScopeBucket('IfStatement', 'consequent') })
         work.push({ kind: 'expr', node: n.test, depth: 0 })
         break
       }
       case 'WhileStatement': {
         const n = node as t.WhileStatement
-        // LIFO order: test → inloop-enter → block → inloop-exit
+        // LIFO order: test → inloop-enter → bucket-enter → block → bucket-exit → inloop-exit
         work.push({ kind: 'inloop-exit', saved: ctx.inLoop })
+        work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
         work.push({ kind: 'block', stmts: (n.body as t.BlockStatement).body })
+        work.push({ kind: 'bucket-enter', bucket: deriveScopeBucket('WhileStatement', 'body') })
         work.push({ kind: 'inloop-enter' })
         work.push({ kind: 'expr', node: n.test, depth: 0 })
         break
       }
       case 'ForStatement': {
         const n = node as t.ForStatement
-        // LIFO order: init → test → update → inloop-enter → block → inloop-exit
+        // LIFO order: init → test → update → inloop-enter → bucket-enter → block → bucket-exit → inloop-exit
         work.push({ kind: 'inloop-exit', saved: ctx.inLoop })
+        work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
         work.push({ kind: 'block', stmts: (n.body as t.BlockStatement).body })
+        work.push({ kind: 'bucket-enter', bucket: deriveScopeBucket('ForStatement', 'body') })
         work.push({ kind: 'inloop-enter' })
         if (n.update)
           work.push({ kind: 'expr', node: n.update, depth: 0 })
@@ -271,26 +288,38 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
       }
       case 'DoWhileStatement': {
         const n = node as t.DoWhileStatement
-        // LIFO order: inloop-enter → block → inloop-exit → test
+        // LIFO order: inloop-enter → bucket-enter → block → bucket-exit → inloop-exit → test
         work.push({ kind: 'expr', node: n.test, depth: 0 })
         work.push({ kind: 'inloop-exit', saved: ctx.inLoop })
+        work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
         work.push({ kind: 'block', stmts: (n.body as t.BlockStatement).body })
+        work.push({ kind: 'bucket-enter', bucket: deriveScopeBucket('DoWhileStatement', 'body') })
         work.push({ kind: 'inloop-enter' })
         break
       }
       case 'BlockStatement':
+        work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
         work.push({ kind: 'block', stmts: (node as t.BlockStatement).body })
+        work.push({ kind: 'bucket-enter', bucket: deriveScopeBucket('BlockStatement', 'body') })
         break
       case 'TryStatement': {
         const n = node as t.TryStatement
+        // Catch body (pushed first = drained last)
+        work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
         work.push({ kind: 'block', stmts: n.handler!.body.body })
+        work.push({ kind: 'bucket-enter', bucket: deriveScopeBucket('CatchClause', 'body') })
+        // Try block (pushed second = drained first)
+        work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
         work.push({ kind: 'block', stmts: n.block.body })
+        work.push({ kind: 'bucket-enter', bucket: deriveScopeBucket('TryStatement', 'block') })
         break
       }
       case 'SwitchStatement': {
         const n = node as t.SwitchStatement
         for (let i = n.cases.length - 1; i >= 0; i--) {
+          work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
           work.push({ kind: 'block', stmts: n.cases[i].consequent })
+          work.push({ kind: 'bucket-enter', bucket: deriveScopeBucket('SwitchCase', 'consequent') })
           if (n.cases[i].test)
             work.push({ kind: 'expr', node: n.cases[i].test!, depth: 0 })
         }
@@ -298,7 +327,9 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         break
       }
       case 'LabeledStatement':
+        work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
         work.push({ kind: 'block', stmts: ((node as t.LabeledStatement).body as t.BlockStatement).body })
+        work.push({ kind: 'bucket-enter', bucket: deriveScopeBucket('LabeledStatement', 'body') })
         break
       case 'ThrowStatement':
         work.push({ kind: 'expr', node: (node as t.ThrowStatement).argument, depth: 0 })
@@ -401,6 +432,14 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         ctx.scope = item.scope
         ctx.typedScope = item.typedScope
         ctx.inFunction = item.inFunction
+        break
+
+      case 'bucket-enter':
+        ctx.scopeBucket = item.bucket
+        break
+
+      case 'bucket-exit':
+        ctx.scopeBucket = item.prev
         break
 
       case 'var-decl': {
