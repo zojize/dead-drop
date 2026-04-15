@@ -401,6 +401,18 @@ function buildAllCandidates(): Candidate[] {
   c.push({ key: 'ExportNamedDeclaration:variable:1', nodeType: 'ExportNamedDeclaration', variant: 1, children: ['expr'], weight: lookupWeight('ExportNamedDeclaration:variable:1'), isStatement: true })
   c.push({ key: 'ExportNamedDeclaration:variable:2', nodeType: 'ExportNamedDeclaration', variant: 2, children: ['expr'], weight: lookupWeight('ExportNamedDeclaration:variable:2'), isStatement: true })
 
+  // ExportNamedDeclaration wrapping FunctionDeclaration — top-level only; 4 variants for param count 0..3
+  for (let n = 0; n <= 3; n++) {
+    c.push({
+      key: `ExportNamedDeclaration:function:${n}`,
+      nodeType: 'ExportNamedDeclaration',
+      variant: 10 + n,
+      children: ['block'],
+      weight: lookupWeight(`ExportNamedDeclaration:function:${n}`),
+      isStatement: true,
+    })
+  }
+
   return c
 }
 

@@ -37,6 +37,7 @@ type WorkItem
     | { kind: 'inloop-enter' }
     | { kind: 'inloop-exit', saved: boolean }
     | { kind: 'var-type-push', name: string, type: string }
+    | { kind: 'scope-push', name: string, type: string }
     | { kind: 'bucket-enter', bucket: ScopeBucket }
     | { kind: 'bucket-exit', prev: ScopeBucket }
 
@@ -93,6 +94,9 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
 
   function stmtKey(node: t.Node): string {
     switch (node.type) {
+      // Directive: Babel parses leading string literals as directives rather than ExpressionStatements.
+      // The encoder emitted an ExpressionStatement(StringLiteral), so map back to StringLiteral:0.
+      case 'Directive': return 'StringLiteral:0'
       case 'VariableDeclaration': return `VariableDeclaration:${node.kind === 'var' ? 0 : node.kind === 'let' ? 1 : 2}`
       case 'IfStatement': return `IfStatement:${(node as t.IfStatement).alternate ? 0 : 1}`
       case 'WhileStatement': return 'WhileStatement:0'
@@ -132,7 +136,10 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
           const variant = kind === 'var' ? 0 : kind === 'let' ? 1 : 2
           return `ExportNamedDeclaration:variable:${variant}`
         }
-        // FunctionDeclaration case comes in Task 16
+        if (n.declaration?.type === 'FunctionDeclaration') {
+          const paramCount = Math.min((n.declaration as t.FunctionDeclaration).params.length, 3)
+          return `ExportNamedDeclaration:function:${paramCount}`
+        }
         return 'ExportNamedDeclaration:variable:0'
       }
       default: return exprKey(node)
@@ -260,6 +267,9 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
 
   function pushStmtChildren(node: t.Node): void {
     switch (node.type) {
+      case 'Directive':
+        // Directive is a leaf — no children to push (treated as StringLiteral:0, a leaf expression)
+        break
       case 'ExpressionStatement':
         // Expression was directly selected as a candidate in statement context
         pushExprChildren((node as t.ExpressionStatement).expression, 0)
@@ -386,7 +396,20 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
           ctx.scope.push(name)
           work.push({ kind: 'var-decl', name, initNode: vd.declarations[0].init!, depth: 0 })
         }
-        // FunctionDeclaration case comes in Task 16
+        else if (n.declaration?.type === 'FunctionDeclaration') {
+          const fd = n.declaration as t.FunctionDeclaration
+          const fnName = (fd.id as t.Identifier).name
+          const params = fd.params.map((_, i) => nameFromHash(hash, 900 + i))
+          const bodyStmts = fd.body.body
+          // LIFO: push in reverse order of desired execution
+          // Execution order: scope-save → bucket-enter → block → bucket-exit → scope-restore → scope-push
+          work.push({ kind: 'scope-push', name: fnName, type: 'function' })
+          work.push({ kind: 'scope-restore', scope: [...ctx.scope], typedScope: [...ctx.typedScope], inFunction: ctx.inFunction })
+          work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
+          work.push({ kind: 'block', stmts: bodyStmts })
+          work.push({ kind: 'bucket-enter', bucket: 'function-body' })
+          work.push({ kind: 'scope-save', scope: params, typedScope: params.map(p => ({ name: p, type: 'any' })), inFunction: true })
+        }
         break
       }
     }
@@ -394,9 +417,15 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
 
   // ─── Main iterative loop ───────────────────────────────────────────
 
-  // Seed with top-level statements (reverse for LIFO)
+  // Seed with top-level statements (reverse for LIFO).
+  // Also handle directives: Babel treats leading string-literal statements as Directive nodes
+  // (stored in ast.program.directives rather than ast.program.body). The encoder emitted them
+  // as ExpressionStatement(StringLiteral), so we must decode them the same way.
+  // Directives come before body in source order; push body first (processed last) then directives.
   for (let i = ast.program.body.length - 1; i >= 0; i--)
     work.push({ kind: 'stmt', node: ast.program.body[i] })
+  for (let i = (ast.program.directives?.length ?? 0) - 1; i >= 0; i--)
+    work.push({ kind: 'stmt', node: ast.program.directives![i] })
 
   while (work.length > 0) {
     const item = work.pop()!
@@ -470,6 +499,11 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         break
 
       case 'var-type-push':
+        ctx.typedScope.push({ name: item.name, type: item.type as any })
+        break
+
+      case 'scope-push':
+        ctx.scope.push(item.name)
         ctx.typedScope.push({ name: item.name, type: item.type as any })
         break
 

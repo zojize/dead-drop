@@ -410,7 +410,7 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         return t.exportDefaultDeclaration(inner)
       }
       case 'ExportNamedDeclaration': {
-        // Only variants 0..2 (variable); function variants (10..13) come in Task 16
+        // variants 0..2: variable (var/let/const)
         if (c.variant >= 0 && c.variant <= 2) {
           const kind = VAR_KINDS[c.variant]
           const name = nameFromHash(hash, ctx.scope.length)
@@ -421,7 +421,35 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
           const decl = t.variableDeclaration(kind, [t.variableDeclarator(t.identifier(name), init)])
           return t.exportNamedDeclaration(decl, [])
         }
-        return t.emptyStatement()  // unreachable until Task 16
+        // variants 10..13: function with param count 0..3
+        if (c.variant >= 10 && c.variant <= 13) {
+          const paramCount = c.variant - 10
+          const fnName = cosmeticFuncName()
+          const paramNames = Array.from({ length: paramCount }, (_, i) => nameFromHash(hash, 900 + i))
+          // Enter function scope
+          const savedScope = [...ctx.scope]
+          const savedTyped = [...ctx.typedScope]
+          const savedFn = ctx.inFunction
+          ctx.inFunction = true
+          for (const p of paramNames) {
+            ctx.scope.push(p)
+            ctx.typedScope.push({ name: p, type: 'any' })
+          }
+          const body = t.blockStatement(buildBlock('FunctionDeclaration', 'body'))
+          ctx.scope = savedScope
+          ctx.typedScope = savedTyped
+          ctx.inFunction = savedFn
+          // Bind function name in outer scope
+          ctx.scope.push(fnName)
+          ctx.typedScope.push({ name: fnName, type: 'function' })
+          const fd = t.functionDeclaration(
+            t.identifier(fnName),
+            paramNames.map(p => t.identifier(p)),
+            body,
+          )
+          return t.exportNamedDeclaration(fd, [])
+        }
+        return t.emptyStatement()
       }
       default: return t.expressionStatement(buildExprNode(c, 0))
     }

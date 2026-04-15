@@ -256,15 +256,34 @@ function isStatementSlot(parentType: string, slot: string): boolean {
   return false
 }
 
-function walk(node: any, bucket: ScopeBucket): void {
+function walk(node: any, bucket: ScopeBucket, isDirectStatement: boolean): void {
   if (!node || typeof node !== 'object')
     return
+
+  // Transparent wrapper: a BlockStatement that IS a function or loop body
+  // shouldn't itself count as the bucket's statement — its contents are the
+  // real function-body/loop-body statements. Count the wrapper only globally
+  // and descend into its body preserving the current bucket.
+  if (node.type === 'BlockStatement' && isDirectStatement && (bucket === 'function-body' || bucket === 'loop-body')) {
+    globalCounts.set('BlockStatement:0', (globalCounts.get('BlockStatement:0') ?? 0) + 1)
+    for (const stmt of node.body ?? []) {
+      walk(stmt, bucket, true)
+    }
+    return
+  }
+
   const ek = exprKey(node)
-  if (ek)
-    inc(bucket, ek)
   const sk = stmtKey(node)
-  if (sk && !ek)
-    inc(bucket, sk)
+  const key = sk ?? ek
+  if (key) {
+    // Always accumulate globally (all-node distribution)
+    globalCounts.set(key, (globalCounts.get(key) ?? 0) + 1)
+    // Only count in bucket if this is a direct statement child of its parent.
+    // Without this, top-level would count every Identifier nested inside every
+    // import/var-decl/etc., drowning out the actual statement-type distribution.
+    if (isDirectStatement)
+      counts[bucket].set(key, (counts[bucket].get(key) ?? 0) + 1)
+  }
 
   for (const slot of Object.keys(node)) {
     if (slot === 'type' || slot === 'start' || slot === 'end' || slot === 'loc' || slot === 'extra' || slot === 'leadingComments' || slot === 'trailingComments')
@@ -274,18 +293,19 @@ function walk(node: any, bucket: ScopeBucket): void {
     // For expression slots (init, test, update, etc.), inherit parent bucket —
     // weights for expressions are counted in whatever statement-level bucket
     // they appear in.
-    const childBucket: ScopeBucket = isStatementSlot(node.type, slot)
+    const slotIsStatement = isStatementSlot(node.type, slot)
+    const childBucket: ScopeBucket = slotIsStatement
       ? deriveScopeBucket(node.type, slot)
       : bucket
 
     if (Array.isArray(val)) {
       for (const item of val) {
         if (item && typeof item === 'object' && item.type)
-          walk(item, childBucket)
+          walk(item, childBucket, slotIsStatement)
       }
     }
     else if (val && typeof val === 'object' && val.type) {
-      walk(val, childBucket)
+      walk(val, childBucket, slotIsStatement)
     }
   }
 }
@@ -342,7 +362,7 @@ for (let i = 0; i < jsFiles.length; i++) {
       errorRecovery: true,
       plugins: ['jsx', 'typescript', ['optionalChainingAssign', { version: '2023-07' }]],
     })
-    walk(ast.program, 'top-level')
+    walk(ast.program, 'top-level', false)
     parsedFiles++
   }
   catch {
