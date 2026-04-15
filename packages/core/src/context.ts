@@ -383,6 +383,16 @@ function buildAllCandidates(): Candidate[] {
   // AwaitExpression (weight 1, only in async function)
   c.push({ key: 'AwaitExpression:0', nodeType: 'AwaitExpression', variant: 0, children: ['expr'], weight: lookupWeight('AwaitExpression:0'), isStatement: false })
 
+  // ImportDeclaration — top-level only
+  // variant 0 = side-effect import: `import 'pkg'`
+  // variant 1 = default import: `import x from 'pkg'`
+  // variants 2..5 = named imports with 1..4 specifiers: `import { a, b } from 'pkg'`
+  c.push({ key: 'ImportDeclaration:sideEffect', nodeType: 'ImportDeclaration', variant: 0, children: [], weight: lookupWeight('ImportDeclaration:sideEffect'), isStatement: true })
+  c.push({ key: 'ImportDeclaration:default', nodeType: 'ImportDeclaration', variant: 1, children: [], weight: lookupWeight('ImportDeclaration:default'), isStatement: true })
+  for (let n = 1; n <= 4; n++) {
+    c.push({ key: `ImportDeclaration:named:${n}`, nodeType: 'ImportDeclaration', variant: 1 + n, children: [], weight: lookupWeight(`ImportDeclaration:named:${n}`), isStatement: true })
+  }
+
   return c
 }
 
@@ -420,6 +430,16 @@ export function filterCandidates(ctx: EncodingContext): Candidate[] {
     // Statement context: BOTH statements and expressions are available.
     // Expressions are implicitly wrapped in ExpressionStatement by the encoder.
     // The decoder identifies them from the ExpressionStatement's inner expression.
+
+    // Top-level-only candidates: imports and exports are legal only at program root
+    if (
+      (c.nodeType === 'ImportDeclaration'
+        || c.nodeType === 'ExportNamedDeclaration'
+        || c.nodeType === 'ExportDefaultDeclaration')
+      && ctx.scopeBucket !== 'top-level'
+    ) {
+      return false
+    }
 
     // Context-gated entries
     if (c.nodeType === 'ReturnStatement' && !ctx.inFunction)
