@@ -461,6 +461,29 @@ export function generateCompact(program: t.Program): string {
         raw(`${n.kind} ${(d.id as t.Identifier).name}=`)
         break
       }
+      case 'ImportDeclaration': {
+        const n = node as t.ImportDeclaration
+        const src = JSON.stringify(n.source.value)
+        if (n.specifiers.length === 0) {
+          raw(`import ${src};`)
+        }
+        else if (n.specifiers.length === 1 && n.specifiers[0].type === 'ImportDefaultSpecifier') {
+          raw(`import ${(n.specifiers[0].local as t.Identifier).name} from ${src};`)
+        }
+        else {
+          const specs = n.specifiers
+            .filter(s => s.type === 'ImportSpecifier')
+            .map((s) => {
+              const imp = s as t.ImportSpecifier
+              const importedName = imp.imported.type === 'Identifier' ? imp.imported.name : (imp.imported as t.StringLiteral).value
+              const localName = (imp.local as t.Identifier).name
+              return importedName === localName ? localName : `${importedName} as ${localName}`
+            })
+            .join(',')
+          raw(`import{${specs}}from ${src};`)
+        }
+        break
+      }
       default:
         raw(';0') // fallback
     }
