@@ -132,11 +132,6 @@ const counts: Record<ScopeBucket, Map<string, number>> = {
 }
 const globalCounts = new Map<string, number>()
 
-function inc(bucket: ScopeBucket, key: string) {
-  counts[bucket].set(key, (counts[bucket].get(key) ?? 0) + 1)
-  globalCounts.set(key, (globalCounts.get(key) ?? 0) + 1)
-}
-
 function exprKey(node: t.Node): string | null {
   switch (node.type) {
     case 'NumericLiteral': return 'NumericLiteral:0'
@@ -211,8 +206,10 @@ function stmtKey(node: t.Node): string | null {
     case 'ExpressionStatement': return 'ExpressionStatement:0'
     case 'ImportDeclaration': {
       const n = node as t.ImportDeclaration
-      if (n.specifiers.length === 0) return 'ImportDeclaration:sideEffect'
-      if (n.specifiers.length === 1 && n.specifiers[0].type === 'ImportDefaultSpecifier') return 'ImportDeclaration:default'
+      if (n.specifiers.length === 0)
+        return 'ImportDeclaration:sideEffect'
+      if (n.specifiers.length === 1 && n.specifiers[0].type === 'ImportDefaultSpecifier')
+        return 'ImportDeclaration:default'
       if (n.specifiers.every(s => s.type === 'ImportSpecifier')) {
         const count = Math.min(n.specifiers.length, 4)
         return count >= 1 ? `ImportDeclaration:named:${count}` : null
@@ -244,15 +241,24 @@ function stmtKey(node: t.Node): string | null {
  * Other slots (tests, conditions, init expressions) inherit the parent bucket.
  */
 function isStatementSlot(parentType: string, slot: string): boolean {
-  if (parentType === 'Program' && slot === 'body') return true
-  if ((parentType === 'FunctionDeclaration' || parentType === 'FunctionExpression' || parentType === 'ArrowFunctionExpression') && slot === 'body') return true
-  if ((parentType === 'ForStatement' || parentType === 'WhileStatement' || parentType === 'DoWhileStatement' || parentType === 'ForOfStatement' || parentType === 'ForInStatement') && slot === 'body') return true
-  if (parentType === 'IfStatement' && (slot === 'consequent' || slot === 'alternate')) return true
-  if (parentType === 'BlockStatement' && slot === 'body') return true
-  if (parentType === 'TryStatement' && (slot === 'block' || slot === 'handler' || slot === 'finalizer')) return true
-  if (parentType === 'CatchClause' && slot === 'body') return true
-  if (parentType === 'SwitchCase' && slot === 'consequent') return true
-  if (parentType === 'LabeledStatement' && slot === 'body') return true
+  if (parentType === 'Program' && slot === 'body')
+    return true
+  if ((parentType === 'FunctionDeclaration' || parentType === 'FunctionExpression' || parentType === 'ArrowFunctionExpression') && slot === 'body')
+    return true
+  if ((parentType === 'ForStatement' || parentType === 'WhileStatement' || parentType === 'DoWhileStatement' || parentType === 'ForOfStatement' || parentType === 'ForInStatement') && slot === 'body')
+    return true
+  if (parentType === 'IfStatement' && (slot === 'consequent' || slot === 'alternate'))
+    return true
+  if (parentType === 'BlockStatement' && slot === 'body')
+    return true
+  if (parentType === 'TryStatement' && (slot === 'block' || slot === 'handler' || slot === 'finalizer'))
+    return true
+  if (parentType === 'CatchClause' && slot === 'body')
+    return true
+  if (parentType === 'SwitchCase' && slot === 'consequent')
+    return true
+  if (parentType === 'LabeledStatement' && slot === 'body')
+    return true
   return false
 }
 
@@ -386,7 +392,8 @@ for (const bucket of ['top-level', 'function-body', 'loop-body', 'block-body'] a
 
 // Build bucketed weight output
 function toWeights(m: Map<string, number>): Record<string, number> {
-  if (m.size === 0) return {}
+  if (m.size === 0)
+    return {}
   const sorted = [...m.entries()].sort((a, b) => b[1] - a[1])
   const maxCount = sorted[0][1]
   const out: Record<string, number> = {}
@@ -401,7 +408,7 @@ const nested = {
   'function-body': toWeights(counts['function-body']),
   'loop-body': toWeights(counts['loop-body']),
   'block-body': toWeights(counts['block-body']),
-  global: toWeights(globalCounts),
+  'global': toWeights(globalCounts),
 }
 
 const outPath = join(process.cwd(), 'packages/core/src/corpus-weights.json')

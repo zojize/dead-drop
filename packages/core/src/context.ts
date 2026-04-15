@@ -179,7 +179,7 @@ const ASSIGN_OPS = ['=', '+=', '-=', '*=', '/=', '%=', '|=', '&=', '^=', '<<=', 
 export { ASSIGN_OPS, BINARY_OPS, LOGICAL_OPS, UNARY_OPS, UPDATE_OPS }
 
 type WeightTable = Record<string, number>
-type BucketedWeights = {
+interface BucketedWeights {
   'top-level': WeightTable
   'function-body': WeightTable
   'loop-body': WeightTable
