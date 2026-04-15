@@ -7,7 +7,6 @@
  *
  * Usage: bun run scripts/scrape-cosmetics.ts
  */
-import type * as t from '@babel/types'
 import { execSync } from 'node:child_process'
 import { mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
