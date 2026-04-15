@@ -392,6 +392,26 @@ describe('maxExprDepth', () => {
     }
   })
 
+  it('top-level output contains import/export statements across many keys', () => {
+    let hasImport = 0
+    let hasExport = 0
+    const N = 200
+    for (let k = 0; k < N; k++) {
+      const msg = new Uint8Array(Array.from({ length: 16 }, (_, i) => (k * 13 + i * 7) & 0xFF))
+      const codec = createCodec({ key: k })
+      const js = codec.encode(msg)
+      if (/\bimport\s/.test(js))
+        hasImport++
+      if (/\bexport\s/.test(js))
+        hasExport++
+      const back = codec.decode(js)
+      expect(Array.from(back)).toEqual(Array.from(msg))
+    }
+    // Lower bounds — corpus weights drive appearance. If these fail, corpus
+    // weights may have drifted or the bucket transitions aren't firing.
+    expect(hasImport + hasExport).toBeGreaterThan(N * 0.02)
+  })
+
   it('lorem roundtrips with depth 64', () => {
     const msg = `Lorem ipsum dolor sit amet, consectetur adipiscing elit. Fusce imperdiet magna consequat lectus lobortis, efficitur efficitur metus blandit. Vestibulum efficitur massa ligula. Curabitur mi nulla, tempus eget posuere eu, venenatis vitae lectus. Nulla facilisi. Donec non rhoncus dui. Integer nisi dolor, mattis sed ullamcorper non, tempus sed eros. Ut et metus sit amet neque tempus aliquet tempor non ligula. Maecenas sit amet dapibus erat. Fusce et risus quis nunc ornare dignissim. Maecenas ac libero eu ex porttitor mollis non in ligula.`
     const data = new TextEncoder().encode(msg)
