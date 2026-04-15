@@ -125,6 +125,16 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         return 'ImportDeclaration:default' // fallback for unusual shapes
       }
       case 'ExportDefaultDeclaration': return 'ExportDefaultDeclaration:0'
+      case 'ExportNamedDeclaration': {
+        const n = node as t.ExportNamedDeclaration
+        if (n.declaration?.type === 'VariableDeclaration') {
+          const kind = n.declaration.kind
+          const variant = kind === 'var' ? 0 : kind === 'let' ? 1 : 2
+          return `ExportNamedDeclaration:variable:${variant}`
+        }
+        // FunctionDeclaration case comes in Task 16
+        return 'ExportNamedDeclaration:variable:0'
+      }
       default: return exprKey(node)
     }
   }
@@ -366,6 +376,17 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
       case 'ExportDefaultDeclaration': {
         const n = node as t.ExportDefaultDeclaration
         work.push({ kind: 'expr', node: n.declaration as t.Node, depth: 0 })
+        break
+      }
+      case 'ExportNamedDeclaration': {
+        const n = node as t.ExportNamedDeclaration
+        if (n.declaration?.type === 'VariableDeclaration') {
+          const vd = n.declaration as t.VariableDeclaration
+          const name = nameFromHash(hash, ctx.scope.length)
+          ctx.scope.push(name)
+          work.push({ kind: 'var-decl', name, initNode: vd.declarations[0].init!, depth: 0 })
+        }
+        // FunctionDeclaration case comes in Task 16
         break
       }
     }

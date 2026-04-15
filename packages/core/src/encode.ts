@@ -409,6 +409,20 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         const { node: inner } = buildExpr(0)
         return t.exportDefaultDeclaration(inner)
       }
+      case 'ExportNamedDeclaration': {
+        // Only variants 0..2 (variable); function variants (10..13) come in Task 16
+        if (c.variant >= 0 && c.variant <= 2) {
+          const kind = VAR_KINDS[c.variant]
+          const name = nameFromHash(hash, ctx.scope.length)
+          ctx.scope.push(name)
+          const { node: init, candidate: initC } = buildExpr(0)
+          const inferredType = initC ? inferTypeFromKey(initC.key) : 'any'
+          ctx.typedScope.push({ name, type: inferredType })
+          const decl = t.variableDeclaration(kind, [t.variableDeclarator(t.identifier(name), init)])
+          return t.exportNamedDeclaration(decl, [])
+        }
+        return t.emptyStatement()  // unreachable until Task 16
+      }
       default: return t.expressionStatement(buildExprNode(c, 0))
     }
   }
