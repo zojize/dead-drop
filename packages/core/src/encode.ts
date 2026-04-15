@@ -44,6 +44,8 @@ const CORPUS_STRINGS = cosmeticData.strings as string[]
 const CORPUS_NUMBERS = cosmeticData.numbers as number[]
 const CORPUS_FUNC_NAMES = cosmeticData.functionNames as string[]
 const CORPUS_PROPS = cosmeticData.properties as string[]
+const PACKAGE_NAMES: string[] = ((cosmeticData as any).packageNames) ?? []
+const IMPORTED_NAMES: string[] = ((cosmeticData as any).importedNames) ?? []
 const VAR_KINDS = ['var', 'let', 'const'] as const
 
 export function encode(message: Uint8Array, options?: EncodeOptions): string {
@@ -111,6 +113,17 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
   }
   function cosmeticFuncName(): string {
     return CORPUS_FUNC_NAMES[rng() % CORPUS_FUNC_NAMES.length]
+  }
+  function cosmeticPackageName(h: number): string {
+    if (PACKAGE_NAMES.length === 0)
+      return 'pkg'
+    return PACKAGE_NAMES[h % PACKAGE_NAMES.length]
+  }
+  function cosmeticImportedName(h: number, offset: number): string {
+    if (IMPORTED_NAMES.length === 0)
+      return nameFromHash(h, offset)
+    const mixed = mixHash(h, offset)
+    return IMPORTED_NAMES[mixed % IMPORTED_NAMES.length]
   }
   function cosmeticFlags(): string {
     const FLAGS = 'dgimsuy'
@@ -365,6 +378,33 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
       case 'DebuggerStatement': return t.debuggerStatement()
       case 'BreakStatement': return t.breakStatement()
       case 'ContinueStatement': return t.continueStatement()
+      case 'ImportDeclaration': {
+        const pkg = cosmeticPackageName(hash)
+        if (c.variant === 0) {
+          // side-effect
+          return t.importDeclaration([], t.stringLiteral(pkg))
+        }
+        if (c.variant === 1) {
+          // default
+          const local = cosmeticImportedName(hash, 1)
+          ctx.scope.push(local)
+          ctx.typedScope.push({ name: local, type: 'any' })
+          return t.importDeclaration(
+            [t.importDefaultSpecifier(t.identifier(local))],
+            t.stringLiteral(pkg),
+          )
+        }
+        // named: variants 2..5 → 1..4 specifiers
+        const count = c.variant - 1
+        const specifiers: t.ImportSpecifier[] = []
+        for (let i = 0; i < count; i++) {
+          const local = cosmeticImportedName(hash, 10 + i)
+          ctx.scope.push(local)
+          ctx.typedScope.push({ name: local, type: 'any' })
+          specifiers.push(t.importSpecifier(t.identifier(local), t.identifier(local)))
+        }
+        return t.importDeclaration(specifiers, t.stringLiteral(pkg))
+      }
       default: return t.expressionStatement(buildExprNode(c, 0))
     }
   }
