@@ -209,6 +209,30 @@ function stmtKey(node: t.Node): string | null {
     case 'BreakStatement': return 'BreakStatement:0'
     case 'ContinueStatement': return 'ContinueStatement:0'
     case 'ExpressionStatement': return 'ExpressionStatement:0'
+    case 'ImportDeclaration': {
+      const n = node as t.ImportDeclaration
+      if (n.specifiers.length === 0) return 'ImportDeclaration:sideEffect'
+      if (n.specifiers.length === 1 && n.specifiers[0].type === 'ImportDefaultSpecifier') return 'ImportDeclaration:default'
+      if (n.specifiers.every(s => s.type === 'ImportSpecifier')) {
+        const count = Math.min(n.specifiers.length, 4)
+        return count >= 1 ? `ImportDeclaration:named:${count}` : null
+      }
+      return null
+    }
+    case 'ExportDefaultDeclaration': return 'ExportDefaultDeclaration:0'
+    case 'ExportNamedDeclaration': {
+      const n = node as t.ExportNamedDeclaration
+      if (n.declaration?.type === 'VariableDeclaration') {
+        const kind = n.declaration.kind
+        const variant = kind === 'var' ? 0 : kind === 'let' ? 1 : 2
+        return `ExportNamedDeclaration:variable:${variant}`
+      }
+      if (n.declaration?.type === 'FunctionDeclaration') {
+        const paramCount = Math.min(n.declaration.params.length, 3)
+        return `ExportNamedDeclaration:function:${paramCount}`
+      }
+      return null
+    }
     default: return null
   }
 }
