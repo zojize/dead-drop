@@ -396,6 +396,11 @@ function buildAllCandidates(): Candidate[] {
   // ExportDefaultDeclaration — top-level only; wraps an expression (data-carrying child)
   c.push({ key: 'ExportDefaultDeclaration:0', nodeType: 'ExportDefaultDeclaration', variant: 0, children: ['expr'], weight: lookupWeight('ExportDefaultDeclaration:0'), isStatement: true })
 
+  // ExportNamedDeclaration wrapping VariableDeclaration — top-level only; 3 variants for var/let/const
+  c.push({ key: 'ExportNamedDeclaration:variable:0', nodeType: 'ExportNamedDeclaration', variant: 0, children: ['expr'], weight: lookupWeight('ExportNamedDeclaration:variable:0'), isStatement: true })
+  c.push({ key: 'ExportNamedDeclaration:variable:1', nodeType: 'ExportNamedDeclaration', variant: 1, children: ['expr'], weight: lookupWeight('ExportNamedDeclaration:variable:1'), isStatement: true })
+  c.push({ key: 'ExportNamedDeclaration:variable:2', nodeType: 'ExportNamedDeclaration', variant: 2, children: ['expr'], weight: lookupWeight('ExportNamedDeclaration:variable:2'), isStatement: true })
+
   return c
 }
 

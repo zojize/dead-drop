@@ -491,6 +491,18 @@ export function generateCompact(program: t.Program): string {
         raw('export default ')
         break
       }
+      case 'ExportNamedDeclaration': {
+        const n = node as t.ExportNamedDeclaration
+        if (n.declaration?.type === 'VariableDeclaration') {
+          const vd = n.declaration as t.VariableDeclaration
+          const d = vd.declarations[0]
+          raw(';')
+          expr(d.init as t.Expression)
+          raw(`export ${vd.kind} ${(d.id as t.Identifier).name}=`)
+        }
+        // FunctionDeclaration case comes in Task 16
+        break
+      }
       default:
         raw(';0') // fallback
     }
