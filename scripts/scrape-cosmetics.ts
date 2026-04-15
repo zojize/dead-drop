@@ -176,7 +176,7 @@ function walk(node: any): void {
       break
     case 'ImportDeclaration': {
       const src = node.source
-      if (src && src.type === 'StringLiteral' && src.value.length > 0 && src.value.length <= 50) {
+      if (src && src.type === 'StringLiteral' && src.value.length > 0 && src.value.length <= 50 && !src.value.startsWith('.') && !src.value.startsWith('/')) {
         inc(packageNames, src.value)
       }
       if (Array.isArray(node.specifiers)) {
