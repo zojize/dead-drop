@@ -39,6 +39,20 @@ export const MAX_EXPR_DEPTH = Infinity // default — override via createCodec f
 
 export type ScopeBucket = 'top-level' | 'function-body' | 'loop-body' | 'block-body'
 
+/**
+ * Derive the scope bucket for code entering a parent node's slot.
+ * Encoder and decoder must agree on this mapping identically.
+ */
+export function deriveScopeBucket(parentType: string, slot: string): ScopeBucket {
+  if (parentType === 'Program')
+    return 'top-level'
+  if (parentType === 'FunctionDeclaration' || parentType === 'FunctionExpression' || parentType === 'ArrowFunctionExpression')
+    return slot === 'body' ? 'function-body' : 'block-body'
+  if (parentType === 'ForStatement' || parentType === 'WhileStatement' || parentType === 'DoWhileStatement' || parentType === 'ForOfStatement' || parentType === 'ForInStatement')
+    return slot === 'body' ? 'loop-body' : 'block-body'
+  return 'block-body'
+}
+
 export interface EncodingContext {
   inFunction: boolean
   inAsync: boolean
