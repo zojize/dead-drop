@@ -54,7 +54,7 @@ bunx @zojize/dead-drop test
 
 ### Dynamic context-dependent tables
 
-Instead of a fixed lookup table, the encoder builds a **256-entry table
+Instead of a fixed lookup table, the encoder builds a **variable-width table
 dynamically** at each byte position based on context. Both encoder and
 decoder maintain identical context state, so they always agree on which
 table entry maps to which byte.
@@ -72,11 +72,18 @@ The table changes as the program is built:
 
 | Context | Candidates added |
 | --- | --- |
-| Top-level | ExpressionStatement, VariableDeclaration, if/while/for, functions, blocks, try/catch, switch, labels, throw |
+| Top-level | ExpressionStatement, VariableDeclaration, if/while/for, functions, blocks, try/catch, switch, labels, throw, **ImportDeclaration**, **ExportNamedDeclaration**, **ExportDefaultDeclaration** |
 | Inside function | + ReturnStatement |
 | Inside loop | + BreakStatement, ContinueStatement |
 | Inside async | + AwaitExpression |
 | Expression slot | Expression-only candidates (operators, calls, literals, etc.) |
+
+Candidate **weights** are **scope-bucket-aware**: the corpus scraper counts
+how often each statement type appears in each scope (top-level / function-body
+/ loop-body / block-body) and the encoder biases table selection accordingly.
+A top-level slot is likely to become an import or declaration; a function-body
+slot is likely to become a return or if-statement; a loop-body slot favors
+flow-control statements. Output shapes mirror real JavaScript module structure.
 
 After a `VariableDeclaration`, the declared name is added to scope and
 becomes available for future Identifier references and assignment LHS.
@@ -162,7 +169,9 @@ return bytes[4 .. 4+length]
   Both encoder and decoder maintain identical hash state.
 
 - **`createCodec` factory.** Shared configuration between encoder and
-  decoder: `createCodec({ seed, maxExprDepth })` returns `{ encode, decode }`.
+  decoder: `createCodec({ seed, key, maxExprDepth })` returns `{ encode, decode }`.
+  `seed` is cosmetic-only (names, strings, numbers); `key` is structural and
+  changes candidate selection — decoder must receive the same key.
   `maxExprDepth` hard-caps expression nesting depth — at the limit, all
   expression children become cosmetic (non-data-carrying). This keeps the
   AST shallow enough for browser parsers (which use recursive descent and
@@ -180,7 +189,7 @@ return bytes[4 .. 4+length]
 bun install
 bun run lint          # lint (uses @antfu/eslint-config)
 bun run lint:fix      # auto-fix lint issues
-bun run test          # 38 tests including fuzz and randomization invariant
+bun run test          # 60 tests including fuzz and randomization invariant
 bun run typecheck     # typecheck all packages
 bun run knip          # check for unused deps/exports
 ```
