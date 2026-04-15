@@ -405,6 +405,10 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         }
         return t.importDeclaration(specifiers, t.stringLiteral(pkg))
       }
+      case 'ExportDefaultDeclaration': {
+        const { node: inner } = buildExpr(0)
+        return t.exportDefaultDeclaration(inner)
+      }
       default: return t.expressionStatement(buildExprNode(c, 0))
     }
   }

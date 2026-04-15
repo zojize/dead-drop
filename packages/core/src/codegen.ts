@@ -484,6 +484,13 @@ export function generateCompact(program: t.Program): string {
         }
         break
       }
+      case 'ExportDefaultDeclaration': {
+        const n = node as t.ExportDefaultDeclaration
+        raw(';')
+        expr(n.declaration as t.Expression)
+        raw('export default ')
+        break
+      }
       default:
         raw(';0') // fallback
     }
