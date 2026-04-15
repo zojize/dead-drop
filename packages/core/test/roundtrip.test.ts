@@ -382,6 +382,16 @@ describe('maxExprDepth', () => {
     expect(outputs.size).toBeGreaterThanOrEqual(2)
   })
 
+  it('round-trips messages that may encode as ExportDefaultDeclaration', () => {
+    for (let seed = 100; seed < 150; seed++) {
+      const msg = new Uint8Array([seed, (seed * 11) & 0xFF, 0xAB, 0xCD])
+      const codec = createCodec({ seed })
+      const js = codec.encode(msg)
+      const back = codec.decode(js)
+      expect(back).toEqual(msg)
+    }
+  })
+
   it('lorem roundtrips with depth 64', () => {
     const msg = `Lorem ipsum dolor sit amet, consectetur adipiscing elit. Fusce imperdiet magna consequat lectus lobortis, efficitur efficitur metus blandit. Vestibulum efficitur massa ligula. Curabitur mi nulla, tempus eget posuere eu, venenatis vitae lectus. Nulla facilisi. Donec non rhoncus dui. Integer nisi dolor, mattis sed ullamcorper non, tempus sed eros. Ut et metus sit amet neque tempus aliquet tempor non ligula. Maecenas sit amet dapibus erat. Fusce et risus quis nunc ornare dignissim. Maecenas ac libero eu ex porttitor mollis non in ligula.`
     const data = new TextEncoder().encode(msg)

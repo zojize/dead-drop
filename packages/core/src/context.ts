@@ -393,6 +393,9 @@ function buildAllCandidates(): Candidate[] {
     c.push({ key: `ImportDeclaration:named:${n}`, nodeType: 'ImportDeclaration', variant: 1 + n, children: [], weight: lookupWeight(`ImportDeclaration:named:${n}`), isStatement: true })
   }
 
+  // ExportDefaultDeclaration — top-level only; wraps an expression (data-carrying child)
+  c.push({ key: 'ExportDefaultDeclaration:0', nodeType: 'ExportDefaultDeclaration', variant: 0, children: ['expr'], weight: lookupWeight('ExportDefaultDeclaration:0'), isStatement: true })
+
   return c
 }
 

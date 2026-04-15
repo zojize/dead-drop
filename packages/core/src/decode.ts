@@ -42,6 +42,7 @@ type WorkItem
 
 export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
   const ast = parse(jsSource, {
+    sourceType: 'module',
     plugins: [['optionalChainingAssign', { version: '2023-07' }]],
   })
 
@@ -123,6 +124,7 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         }
         return 'ImportDeclaration:default' // fallback for unusual shapes
       }
+      case 'ExportDefaultDeclaration': return 'ExportDefaultDeclaration:0'
       default: return exprKey(node)
     }
   }
@@ -359,6 +361,11 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
             ctx.typedScope.push({ name: spec.local.name, type: 'any' })
           }
         }
+        break
+      }
+      case 'ExportDefaultDeclaration': {
+        const n = node as t.ExportDefaultDeclaration
+        work.push({ kind: 'expr', node: n.declaration as t.Node, depth: 0 })
         break
       }
     }
