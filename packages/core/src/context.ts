@@ -37,6 +37,8 @@ export interface ScopeEntry {
 /** Max expression nesting depth before forcing leaf-only candidates. */
 export const MAX_EXPR_DEPTH = Infinity // default — override via createCodec for browser use
 
+export type ScopeBucket = 'top-level' | 'function-body' | 'loop-body' | 'block-body'
+
 export interface EncodingContext {
   inFunction: boolean
   inAsync: boolean
@@ -47,6 +49,7 @@ export interface EncodingContext {
   exprDepth: number
   maxExprDepth: number
   blockDepth: number
+  scopeBucket: ScopeBucket
 }
 
 export function initialContext(): EncodingContext {
@@ -60,6 +63,7 @@ export function initialContext(): EncodingContext {
     exprDepth: 0,
     maxExprDepth: MAX_EXPR_DEPTH,
     blockDepth: 0,
+    scopeBucket: 'top-level',
   }
 }
 
