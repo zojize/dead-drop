@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { generateCompact } from '../src/codegen'
 import { decode } from '../src/decode'
 import { encode } from '../src/encode'
+import { createCodec } from '../src/lib'
 
 function testRoundTrip(input: Uint8Array) {
   const js = encode(input)
@@ -313,6 +314,18 @@ describe('encode output validity', () => {
       const js = encode(data)
       const decoded = decode(js)
       expect(decoded.length).toBe(len)
+    }
+  })
+})
+
+describe('import candidates', () => {
+  it('round-trips messages with import-candidate eligibility', () => {
+    for (let seed = 0; seed < 50; seed++) {
+      const msg = new Uint8Array([seed, (seed * 7) & 0xFF, (seed * 13) & 0xFF])
+      const codec = createCodec({ seed })
+      const js = codec.encode(msg)
+      const back = codec.decode(js)
+      expect(back).toEqual(msg)
     }
   })
 })

@@ -110,6 +110,19 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
       case 'DebuggerStatement': return 'DebuggerStatement:0'
       case 'BreakStatement': return 'BreakStatement:0'
       case 'ContinueStatement': return 'ContinueStatement:0'
+      case 'ImportDeclaration': {
+        const n = node as t.ImportDeclaration
+        if (n.specifiers.length === 0)
+          return 'ImportDeclaration:sideEffect'
+        if (n.specifiers.length === 1 && n.specifiers[0].type === 'ImportDefaultSpecifier')
+          return 'ImportDeclaration:default'
+        if (n.specifiers.every(s => s.type === 'ImportSpecifier')) {
+          const count = n.specifiers.length
+          if (count >= 1 && count <= 4)
+            return `ImportDeclaration:named:${count}`
+        }
+        return 'ImportDeclaration:default' // fallback for unusual shapes
+      }
       default: return exprKey(node)
     }
   }
@@ -338,6 +351,16 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         if ((node as t.ReturnStatement).argument)
           work.push({ kind: 'expr', node: (node as t.ReturnStatement).argument!, depth: 0 })
         break
+      case 'ImportDeclaration': {
+        const n = node as t.ImportDeclaration
+        for (const spec of n.specifiers) {
+          if (spec.local && spec.local.type === 'Identifier') {
+            ctx.scope.push(spec.local.name)
+            ctx.typedScope.push({ name: spec.local.name, type: 'any' })
+          }
+        }
+        break
+      }
     }
   }
 
