@@ -7,7 +7,7 @@ import {
   bitWidth,
   BitWriter,
   buildTable,
-
+  deriveScopeBucket,
   filterCandidates,
   inferTypeFromKey,
   initialContext,
@@ -250,7 +250,10 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
           ctx.typedScope.push({ name: p, type: 'any' })
         }
         ctx.inFunction = true
+        const savedBucket = ctx.scopeBucket
+        ctx.scopeBucket = 'function-body'
         const body = buildExpr(depth + 1).node
+        ctx.scopeBucket = savedBucket
         ctx.scope = savedScope
         ctx.typedScope = savedTyped
         ctx.inFunction = savedFn
@@ -270,7 +273,10 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
           ctx.typedScope.push({ name: p, type: 'any' })
         }
         ctx.inFunction = true
+        const savedBucket = ctx.scopeBucket
+        ctx.scopeBucket = 'function-body'
         const body = buildExpr(depth + 1).node
+        ctx.scopeBucket = savedBucket
         ctx.scope = savedScope
         ctx.typedScope = savedTyped
         ctx.inFunction = savedFn
@@ -304,15 +310,15 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
       }
       case 'IfStatement': {
         const test = buildExpr(0).node
-        const cons = buildBlock()
-        const alt = c.variant === 0 ? buildBlock() : null
+        const cons = buildBlock('IfStatement', 'consequent')
+        const alt = c.variant === 0 ? buildBlock('IfStatement', 'alternate') : null
         return t.ifStatement(test, t.blockStatement(cons), alt ? t.blockStatement(alt) : null)
       }
       case 'WhileStatement': {
         const test = buildExpr(0).node
         const savedLoop = ctx.inLoop
         ctx.inLoop = true
-        const body = buildBlock()
+        const body = buildBlock('WhileStatement', 'body')
         ctx.inLoop = savedLoop
         return t.whileStatement(test, t.blockStatement(body))
       }
@@ -325,34 +331,34 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         const update = hasUpdate ? buildExpr(0).node : null
         const savedLoop = ctx.inLoop
         ctx.inLoop = true
-        const body = buildBlock()
+        const body = buildBlock('ForStatement', 'body')
         ctx.inLoop = savedLoop
         return t.forStatement(init, test, update, t.blockStatement(body))
       }
       case 'DoWhileStatement': {
         const savedLoop = ctx.inLoop
         ctx.inLoop = true
-        const body = buildBlock()
+        const body = buildBlock('DoWhileStatement', 'body')
         ctx.inLoop = savedLoop
         return t.doWhileStatement(buildExpr(0).node, t.blockStatement(body))
       }
-      case 'BlockStatement': return t.blockStatement(buildBlock())
+      case 'BlockStatement': return t.blockStatement(buildBlock('BlockStatement', 'body'))
       case 'TryStatement': {
-        const tryBody = buildBlock()
+        const tryBody = buildBlock('TryStatement', 'block')
         const paramName = nameFromHash(hash, 999)
-        const catchBody = buildBlock()
+        const catchBody = buildBlock('CatchClause', 'body')
         return t.tryStatement(t.blockStatement(tryBody), t.catchClause(t.identifier(paramName), t.blockStatement(catchBody)))
       }
       case 'SwitchStatement': {
         const disc = buildExpr(0).node
         const cases = Array.from({ length: c.variant }, () => {
           const test = buildExpr(0).node
-          const body = buildBlock()
+          const body = buildBlock('SwitchCase', 'consequent')
           return t.switchCase(test, body)
         })
         return t.switchStatement(disc, cases)
       }
-      case 'LabeledStatement': return t.labeledStatement(t.identifier(labelFromHash(hash)), t.blockStatement(buildBlock()))
+      case 'LabeledStatement': return t.labeledStatement(t.identifier(labelFromHash(hash)), t.blockStatement(buildBlock('LabeledStatement', 'body')))
       case 'ThrowStatement': return t.throwStatement(buildExpr(0).node)
       case 'ReturnStatement': return t.returnStatement(buildExpr(0).node)
       case 'EmptyStatement': return t.emptyStatement()
@@ -363,15 +369,18 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
     }
   }
 
-  function buildBlock(): t.Statement[] {
+  function buildBlock(parentType: string, slot: string): t.Statement[] {
     if (isPad())
       return []
     const countByte = readBits(8)
     hash = mixHash(hash, countByte)
     ctx.blockDepth++
+    const prevBucket = ctx.scopeBucket
+    ctx.scopeBucket = deriveScopeBucket(parentType, slot)
     const stmts: t.Statement[] = []
     for (let i = 0; i < countByte; i++)
       stmts.push(buildTopLevel())
+    ctx.scopeBucket = prevBucket
     ctx.blockDepth--
     return stmts
   }
