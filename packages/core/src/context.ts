@@ -178,10 +178,23 @@ const UPDATE_OPS = ['++', '--'] as const
 const ASSIGN_OPS = ['=', '+=', '-=', '*=', '/=', '%=', '|=', '&=', '^=', '<<=', '>>=', '>>>=', '**=', '??=', '||=', '&&='] as const
 export { ASSIGN_OPS, BINARY_OPS, LOGICAL_OPS, UNARY_OPS, UPDATE_OPS }
 
-/** Corpus-derived weight for a candidate key. Falls back to 0.01 for unobserved keys. */
-const W = corpusWeights as Record<string, number>
-function w(key: string): number {
-  return W[key] ?? 0.01
+type WeightTable = Record<string, number>
+type BucketedWeights = {
+  'top-level': WeightTable
+  'function-body': WeightTable
+  'loop-body': WeightTable
+  'block-body': WeightTable
+  'global': WeightTable
+}
+
+const W = corpusWeights as BucketedWeights
+
+/**
+ * Corpus-derived weight for a candidate key in a given bucket.
+ * Falls through: bucket-specific → global → 0.01 default.
+ */
+function w(key: string, bucket: ScopeBucket = 'top-level'): number {
+  return W[bucket]?.[key] ?? W.global[key] ?? 0.01
 }
 
 /** Build the full candidate pool (all possible entries across all contexts). */
