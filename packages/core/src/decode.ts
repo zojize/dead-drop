@@ -1,24 +1,7 @@
 import type * as t from '@babel/types'
-import type { EncodingContext } from './context'
+import type { EncodingContext, ScopeBucket } from './context'
 import { parse } from '@babel/parser'
-import {
-  ASSIGN_OPS,
-  BINARY_OPS,
-  bitWidth,
-  BitWriter,
-  buildReverseTable,
-  buildTable,
-  deriveScopeBucket,
-  filterCandidates,
-  inferTypeFromKey,
-  initialContext,
-  LOGICAL_OPS,
-  MAX_EXPR_DEPTH,
-  mixHash,
-  nameFromHash,
-  type ScopeBucket,
-  UNARY_OPS,
-} from './context'
+import { ASSIGN_OPS, BINARY_OPS, bitWidth, BitWriter, buildReverseTable, buildTable, deriveScopeBucket, filterCandidates, inferTypeFromKey, initialContext, LOGICAL_OPS, MAX_EXPR_DEPTH, mixHash, nameFromHash, UNARY_OPS } from './context'
 
 export interface DecodeOptions {
   /** Structural key — must match the key used during encoding. */
