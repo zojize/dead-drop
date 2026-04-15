@@ -141,10 +141,16 @@ return bytes[4 .. 4+length]
   decoder ignores them. You can randomize every name, string, and number
   in the encoded JS and `decode()` still returns the same bytes.
 
-- **Runtime-safe output.** Generated JS runs without errors. The encoder
-  tracks the inferred type of each declared variable (`function`, `array`,
-  `object`, etc.) and only offers operations when their operand types are
-  available — e.g. `CallExpression` only when scope has a callable.
+- **Output limitations.** It tries to generate JS that runs without errors, but it does not
+  guarantee termination. The encoder tracks the inferred type of each declared
+  variable (`function`, `array`, `object`, etc.) and only offers operations
+  when their operand types are available — e.g. `CallExpression` only when scope
+  has a callable. Unlike binary-level tools like
+  [Hydan](https://www.cs.columbia.edu/~angelos/Papers/hydan.pdf) that embed data
+  in working executables, dead-drop generates the cover medium from scratch.
+  This sacrifices plausible functionality but gains a much larger encoding alphabet
+  and makes statistical detection harder, since the AST node distribution is modeled
+  on real-world corpus frequencies.
 
 - **Dynamic tables from context.** The candidate pool includes both
   statement and expression types, filtered and shuffled per-position.
