@@ -9,67 +9,67 @@ describe('scope bucket', () => {
 })
 
 describe('deriveScopeBucket', () => {
-  it('Program body → top-level', () => {
+  it('program body → top-level', () => {
     expect(deriveScopeBucket('Program', 'body')).toBe('top-level')
   })
 
-  it('FunctionDeclaration body → function-body', () => {
+  it('functionDeclaration body → function-body', () => {
     expect(deriveScopeBucket('FunctionDeclaration', 'body')).toBe('function-body')
   })
 
-  it('FunctionExpression body → function-body', () => {
+  it('functionExpression body → function-body', () => {
     expect(deriveScopeBucket('FunctionExpression', 'body')).toBe('function-body')
   })
 
-  it('ArrowFunctionExpression body → function-body', () => {
+  it('arrowFunctionExpression body → function-body', () => {
     expect(deriveScopeBucket('ArrowFunctionExpression', 'body')).toBe('function-body')
   })
 
-  it('ForStatement body → loop-body', () => {
+  it('forStatement body → loop-body', () => {
     expect(deriveScopeBucket('ForStatement', 'body')).toBe('loop-body')
   })
 
-  it('WhileStatement body → loop-body', () => {
+  it('whileStatement body → loop-body', () => {
     expect(deriveScopeBucket('WhileStatement', 'body')).toBe('loop-body')
   })
 
-  it('DoWhileStatement body → loop-body', () => {
+  it('doWhileStatement body → loop-body', () => {
     expect(deriveScopeBucket('DoWhileStatement', 'body')).toBe('loop-body')
   })
 
-  it('ForOfStatement body → loop-body', () => {
+  it('forOfStatement body → loop-body', () => {
     expect(deriveScopeBucket('ForOfStatement', 'body')).toBe('loop-body')
   })
 
-  it('ForInStatement body → loop-body', () => {
+  it('forInStatement body → loop-body', () => {
     expect(deriveScopeBucket('ForInStatement', 'body')).toBe('loop-body')
   })
 
-  it('IfStatement consequent → block-body', () => {
+  it('ifStatement consequent → block-body', () => {
     expect(deriveScopeBucket('IfStatement', 'consequent')).toBe('block-body')
   })
 
-  it('IfStatement alternate → block-body', () => {
+  it('ifStatement alternate → block-body', () => {
     expect(deriveScopeBucket('IfStatement', 'alternate')).toBe('block-body')
   })
 
-  it('BlockStatement body → block-body', () => {
+  it('blockStatement body → block-body', () => {
     expect(deriveScopeBucket('BlockStatement', 'body')).toBe('block-body')
   })
 
-  it('TryStatement block → block-body', () => {
+  it('tryStatement block → block-body', () => {
     expect(deriveScopeBucket('TryStatement', 'block')).toBe('block-body')
   })
 
-  it('CatchClause body → block-body', () => {
+  it('catchClause body → block-body', () => {
     expect(deriveScopeBucket('CatchClause', 'body')).toBe('block-body')
   })
 
-  it('SwitchCase consequent → block-body', () => {
+  it('switchCase consequent → block-body', () => {
     expect(deriveScopeBucket('SwitchCase', 'consequent')).toBe('block-body')
   })
 
-  it('LabeledStatement body → block-body', () => {
+  it('labeledStatement body → block-body', () => {
     expect(deriveScopeBucket('LabeledStatement', 'body')).toBe('block-body')
   })
 

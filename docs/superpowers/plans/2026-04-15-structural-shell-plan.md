@@ -318,7 +318,7 @@ In `packages/core/src/context.ts`, replace the current `W` and `w` bindings (aro
 
 ```ts
 type WeightTable = Record<string, number>
-type BucketedWeights = {
+interface BucketedWeights {
   'top-level': WeightTable
   'function-body': WeightTable
   'loop-body': WeightTable
@@ -566,17 +566,17 @@ The decoder must mirror the encoder's bucket transitions via work-stack items.
 In `packages/core/src/decode.ts`, find the work-item type definition (top of file, likely a discriminated union). Add two new variants:
 
 ```ts
-type WorkItem =
-  | { kind: 'expr'; node: t.Node; depth: number }
-  | { kind: 'stmt'; node: t.Node }
-  | { kind: 'block'; nodes: t.Node[] }
-  | { kind: 'scope-save' }
-  | { kind: 'scope-restore'; /* existing fields */ }
-  | { kind: 'inloop-enter' }
-  | { kind: 'inloop-exit' }
-  | { kind: 'var-type-push'; /* existing fields */ }
-  | { kind: 'bucket-enter'; bucket: ScopeBucket }
-  | { kind: 'bucket-exit'; bucket: ScopeBucket }
+type WorkItem
+  = | { kind: 'expr', node: t.Node, depth: number }
+    | { kind: 'stmt', node: t.Node }
+    | { kind: 'block', nodes: t.Node[] }
+    | { kind: 'scope-save' }
+    | { kind: 'scope-restore' /* existing fields */ }
+    | { kind: 'inloop-enter' }
+    | { kind: 'inloop-exit' }
+    | { kind: 'var-type-push' /* existing fields */ }
+    | { kind: 'bucket-enter', bucket: ScopeBucket }
+    | { kind: 'bucket-exit', bucket: ScopeBucket }
 ```
 
 Import `ScopeBucket` and `deriveScopeBucket` from `./context`.
@@ -692,27 +692,32 @@ function inc(bucket: ScopeBucket, key: string) {
 function nodeKey(node: any): string | null {
   // Reuse the existing key derivation. If current script has a function
   // like `nodeToKey(node)`, keep it and return null for uninteresting nodes.
-  if (!node || typeof node !== 'object') return null
+  if (!node || typeof node !== 'object')
+    return null
   // ... existing derivation logic (e.g., `${node.type}:${variant(node)}`) ...
-  return `${node.type}:0`  // fallback — replace with real derivation
+  return `${node.type}:0` // fallback — replace with real derivation
 }
 
 function walk(node: any, bucket: ScopeBucket): void {
-  if (!node || typeof node !== 'object') return
+  if (!node || typeof node !== 'object')
+    return
 
   const key = nodeKey(node)
-  if (key) inc(bucket, key)
+  if (key)
+    inc(bucket, key)
 
   // For every child, compute the child bucket based on this node's type and child slot name
   for (const slot of Object.keys(node)) {
-    if (slot === 'type' || slot === 'start' || slot === 'end' || slot === 'loc' || slot === 'extra' || slot === 'leadingComments' || slot === 'trailingComments') continue
+    if (slot === 'type' || slot === 'start' || slot === 'end' || slot === 'loc' || slot === 'extra' || slot === 'leadingComments' || slot === 'trailingComments')
+      continue
     const val = node[slot]
     const childBucket = slot === 'body' || slot === 'consequent' || slot === 'alternate' || slot === 'block'
       ? deriveScopeBucket(node.type, slot)
-      : bucket  // non-statement slots (expressions) inherit parent bucket
+      : bucket // non-statement slots (expressions) inherit parent bucket
     if (Array.isArray(val)) {
       for (const item of val) {
-        if (item && typeof item === 'object' && item.type) walk(item, childBucket)
+        if (item && typeof item === 'object' && item.type)
+          walk(item, childBucket)
       }
     }
     else if (val && typeof val === 'object' && val.type) {
@@ -731,8 +736,9 @@ Also change the output serialization. At the end of the script:
 function normalize(m: Map<string, number>, total: number): Record<string, number> {
   const out: Record<string, number> = {}
   for (const [k, v] of m.entries()) {
-    const weight = (v / total) * 100  // preserve the scale of the existing file
-    if (weight >= 0.01) out[k] = Math.round(weight * 100) / 100
+    const weight = (v / total) * 100 // preserve the scale of the existing file
+    if (weight >= 0.01)
+      out[k] = Math.round(weight * 100) / 100
   }
   return out
 }
@@ -748,7 +754,7 @@ const nested = {
   'function-body': normalize(counts['function-body'], fnTotal),
   'loop-body': normalize(counts['loop-body'], loopTotal),
   'block-body': normalize(counts['block-body'], blockTotal),
-  global: normalize(globalCounts, total),
+  'global': normalize(globalCounts, total),
 }
 
 writeFileSync('packages/core/src/corpus-weights.json', `${JSON.stringify(nested, null, 2)}\n`)
@@ -951,8 +957,9 @@ In `filterCandidates(ctx)`, add a new gate above the returns:
 if (
   (c.nodeType === 'ImportDeclaration' || c.nodeType === 'ExportNamedDeclaration' || c.nodeType === 'ExportDefaultDeclaration')
   && ctx.scopeBucket !== 'top-level'
-)
+) {
   return false
+}
 ```
 
 - [ ] **Step 2: Add ImportDeclaration entries to buildAllCandidates**
@@ -1000,16 +1007,19 @@ In `packages/core/src/encode.ts`, alongside `cosmeticIdent()` and `cosmeticFuncN
 
 ```ts
 import cosmeticData from './cosmetic-data.json'
+
 const PACKAGE_NAMES: string[] = (cosmeticData as any).packageNames ?? []
 const IMPORTED_NAMES: string[] = (cosmeticData as any).importedNames ?? []
 
 function cosmeticPackageName(hash: number): string {
-  if (PACKAGE_NAMES.length === 0) return 'pkg'
+  if (PACKAGE_NAMES.length === 0)
+    return 'pkg'
   return PACKAGE_NAMES[hash % PACKAGE_NAMES.length]
 }
 
 function cosmeticImportedName(hash: number, offset: number): string {
-  if (IMPORTED_NAMES.length === 0) return nameFromHash(hash, offset)
+  if (IMPORTED_NAMES.length === 0)
+    return nameFromHash(hash, offset)
   return IMPORTED_NAMES[mixHash(hash, offset) % IMPORTED_NAMES.length]
 }
 ```
@@ -1453,7 +1463,7 @@ for (let n = 0; n <= 3; n++) {
   c.push({
     key: `ExportNamedDeclaration:function:${n}`,
     nodeType: 'ExportNamedDeclaration',
-    variant: 10 + n,  // disambiguate from :variable variants 0..2
+    variant: 10 + n, // disambiguate from :variable variants 0..2
     children: ['expr'],
     weight: lookupWeight(`ExportNamedDeclaration:function:${n}`),
     isStatement: true,
@@ -1586,8 +1596,10 @@ it('encoded output contains import/export statements at least some of the time',
     const msg = new Uint8Array(Array.from({ length: 16 }, (_, i) => (seed * 7 + i) & 0xFF))
     const codec = createCodec({ seed })
     const js = codec.encode(msg)
-    if (/\bimport\b/.test(js)) hasImport++
-    if (/\bexport\b/.test(js)) hasExport++
+    if (/\bimport\b/.test(js))
+      hasImport++
+    if (/\bexport\b/.test(js))
+      hasExport++
     // Verify round-trip
     expect(codec.decode(js)).toEqual(msg)
   }
