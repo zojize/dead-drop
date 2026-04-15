@@ -500,7 +500,13 @@ export function generateCompact(program: t.Program): string {
           expr(d.init as t.Expression)
           raw(`export ${vd.kind} ${(d.id as t.Identifier).name}=`)
         }
-        // FunctionDeclaration case comes in Task 16
+        else if (n.declaration?.type === 'FunctionDeclaration') {
+          const fd = n.declaration as t.FunctionDeclaration
+          const params = fd.params.map(p => (p as t.Identifier).name).join(',')
+          raw('}')
+          stmtList(fd.body.body)
+          raw(`export function ${(fd.id as t.Identifier).name}(${params}){`)
+        }
         break
       }
       default:
