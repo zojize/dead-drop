@@ -37,19 +37,6 @@ The workflow lives at `.github/workflows/release-please.yml`.
 The npm token must be stored as a GitHub Actions secret named `NPM_TOKEN`:
 - Settings > Secrets and variables > Actions > `NPM_TOKEN`
 
-### Manual publishing (fallback)
-
-If Release Please is broken or you need to publish manually:
-
-1. Bump version in `packages/core/package.json`
-2. `cd packages/core && npm pack --dry-run` — inspect tarball contents, verify no `.env`, credentials, or unexpected files
-3. Read `.env` for npm automation token
-4. `echo "//registry.npmjs.org/:_authToken=<TOKEN>" > ~/.npmrc`
-5. `cd packages/core && npm publish --access public`
-6. `rm ~/.npmrc` — clean up token immediately
-7. `git tag vX.Y.Z && git push origin vX.Y.Z`
-8. `gh release create vX.Y.Z` with changelog
-
 ## Architecture
 
 - **Monorepo**: `packages/core` (library + CLI) and `playground` (Vite + React)
