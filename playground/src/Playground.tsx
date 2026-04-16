@@ -5,7 +5,7 @@ import './playground.css'
 
 const PLACEHOLDER = 'the quick brown fox jumps over the lazy dog'
 
-interface UrlState { input: string, seed?: number, maxDepth?: number }
+interface UrlState { input: string, seed?: number, key?: number, maxDepth?: number }
 
 function loadFromUrl(): UrlState | null {
   const params = new URLSearchParams(window.location.search)
@@ -29,6 +29,7 @@ export function Playground() {
   const restored = useRef(loadFromUrl())
   const [input, setInputRaw] = useState(restored.current?.input ?? '')
   const [seed, setSeed] = useState<number | undefined>(restored.current?.seed)
+  const [key, setKey] = useState<number | undefined>(restored.current?.key)
   const [maxDepth, setMaxDepth] = useState<number | undefined>(restored.current?.maxDepth ?? 20)
   const [encoded, setEncodedRaw] = useState('')
   const [decoded, setDecoded] = useState('')
@@ -62,7 +63,7 @@ export function Playground() {
         setDecodeMs(null)
         return
       }
-      const codec = createCodec({ seed, maxExprDepth: maxDepth })
+      const codec = createCodec({ seed, key, maxExprDepth: maxDepth })
       const t0 = performance.now()
       const js = codec.encode(new TextEncoder().encode(input))
       const encTime = performance.now() - t0
@@ -75,7 +76,7 @@ export function Playground() {
       setDecoded(new TextDecoder().decode(bytes))
     }
     catch (e: any) { setError(e.message) }
-  }, [input, seed, maxDepth])
+  }, [input, seed, key, maxDepth])
 
   // Decode pasted JS
   useEffect(() => {
@@ -90,7 +91,7 @@ export function Playground() {
           setDecoded('')
           return
         }
-        const codec = createCodec({ maxExprDepth: maxDepth })
+        const codec = createCodec({ key, maxExprDepth: maxDepth })
         const t0 = performance.now()
         const bytes = codec.decode(encoded)
         setDecodeMs(performance.now() - t0)
@@ -99,7 +100,7 @@ export function Playground() {
       catch (e: any) { setError(e.message) }
     }, 250)
     return () => clearTimeout(t)
-  }, [encoded, maxDepth])
+  }, [encoded, key, maxDepth])
 
   useEffect(() => {
     if (!initialized.current) {
@@ -114,17 +115,17 @@ export function Playground() {
       return
     const t = setTimeout(() => {
       if (input)
-        saveToUrl({ input, seed, maxDepth })
+        saveToUrl({ input, seed, key, maxDepth })
     }, 400)
     return () => clearTimeout(t)
-  }, [input, seed, maxDepth])
+  }, [input, seed, key, maxDepth])
 
   const share = useCallback(async () => {
-    saveToUrl({ input, seed, maxDepth })
+    saveToUrl({ input, seed, key, maxDepth })
     await navigator.clipboard.writeText(window.location.href)
     setCopied(true)
     setTimeout(setCopied, 2000, false)
-  }, [input, seed, maxDepth])
+  }, [input, seed, key, maxDepth])
 
   const timing = encodeMs !== null || decodeMs !== null
     ? [
@@ -178,6 +179,28 @@ export function Playground() {
                 }
               }}
               placeholder="auto"
+            />
+          </div>
+          <div className="sp-seed">
+            <label>key</label>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={key ?? ''}
+              onChange={(e) => {
+                const v = e.target.value
+                if (v === '') {
+                  setKey(undefined)
+                  dirRef.current = 'encode'
+                  return
+                }
+                const n = Number.parseInt(v, 10)
+                if (!Number.isNaN(n)) {
+                  setKey(n)
+                  dirRef.current = 'encode'
+                }
+              }}
+              placeholder="none"
             />
           </div>
           <div className="sp-seed">
