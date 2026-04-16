@@ -15,7 +15,31 @@
 - Wait for CI (`gh run list --limit 2`) and confirm both CI and Deploy are green
 - Do NOT tell the user CI passed without actually checking
 
-## Publishing pipeline
+## Publishing pipeline (automated via Release Please)
+
+Publishing is handled by [Release Please](https://github.com/googleapis/release-please-action).
+The workflow lives at `.github/workflows/release-please.yml`.
+
+### How it works
+
+1. Write conventional commits (`feat:` = minor, `fix:` = patch, `feat!:` or `BREAKING CHANGE` = major)
+2. On push to `main`, Release Please opens/updates a **release PR** with version bump + changelog
+3. **Merging that release PR** triggers: GitHub release creation + `npm publish`
+4. No manual version bumps, tags, or npm commands needed
+
+### Config files
+
+- `release-please-config.json` — declares `packages/core` as a node release type
+- `.release-please-manifest.json` — tracks current version (auto-updated by Release Please)
+
+### Setup requirement
+
+The npm token must be stored as a GitHub Actions secret named `NPM_TOKEN`:
+- Settings > Secrets and variables > Actions > `NPM_TOKEN`
+
+### Manual publishing (fallback)
+
+If Release Please is broken or you need to publish manually:
 
 1. Bump version in `packages/core/package.json`
 2. `cd packages/core && npm pack --dry-run` — inspect tarball contents, verify no `.env`, credentials, or unexpected files
@@ -25,7 +49,6 @@
 6. `rm ~/.npmrc` — clean up token immediately
 7. `git tag vX.Y.Z && git push origin vX.Y.Z`
 8. `gh release create vX.Y.Z` with changelog
-9. Clean up old tags/releases
 
 ## Architecture
 
