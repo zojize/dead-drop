@@ -1,6 +1,10 @@
 {
   "release-type": "node",
+  "include-component-in-tag": false,
+  "include-v-in-tag": true,
   "packages": {
-    "packages/core": {}
+    "packages/core": {
+      "component": "dead-drop"
+    }
   }
 }
