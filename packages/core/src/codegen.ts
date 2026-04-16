@@ -461,6 +461,54 @@ export function generateCompact(program: t.Program): string {
         raw(`${n.kind} ${(d.id as t.Identifier).name}=`)
         break
       }
+      case 'ImportDeclaration': {
+        const n = node as t.ImportDeclaration
+        const src = JSON.stringify(n.source.value)
+        if (n.specifiers.length === 0) {
+          raw(`import ${src};`)
+        }
+        else if (n.specifiers.length === 1 && n.specifiers[0].type === 'ImportDefaultSpecifier') {
+          raw(`import ${(n.specifiers[0].local as t.Identifier).name} from ${src};`)
+        }
+        else {
+          const specs = n.specifiers
+            .filter(s => s.type === 'ImportSpecifier')
+            .map((s) => {
+              const imp = s as t.ImportSpecifier
+              const importedName = imp.imported.type === 'Identifier' ? imp.imported.name : (imp.imported as t.StringLiteral).value
+              const localName = (imp.local as t.Identifier).name
+              return importedName === localName ? localName : `${importedName} as ${localName}`
+            })
+            .join(',')
+          raw(`import{${specs}}from ${src};`)
+        }
+        break
+      }
+      case 'ExportDefaultDeclaration': {
+        const n = node as t.ExportDefaultDeclaration
+        raw(';')
+        expr(n.declaration as t.Expression)
+        raw('export default ')
+        break
+      }
+      case 'ExportNamedDeclaration': {
+        const n = node as t.ExportNamedDeclaration
+        if (n.declaration?.type === 'VariableDeclaration') {
+          const vd = n.declaration as t.VariableDeclaration
+          const d = vd.declarations[0]
+          raw(';')
+          expr(d.init as t.Expression)
+          raw(`export ${vd.kind} ${(d.id as t.Identifier).name}=`)
+        }
+        else if (n.declaration?.type === 'FunctionDeclaration') {
+          const fd = n.declaration as t.FunctionDeclaration
+          const params = fd.params.map(p => (p as t.Identifier).name).join(',')
+          raw('}')
+          stmtList(fd.body.body)
+          raw(`export function ${(fd.id as t.Identifier).name}(${params}){`)
+        }
+        break
+      }
       default:
         raw(';0') // fallback
     }

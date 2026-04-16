@@ -7,7 +7,7 @@ import {
   bitWidth,
   BitWriter,
   buildTable,
-
+  deriveScopeBucket,
   filterCandidates,
   inferTypeFromKey,
   initialContext,
@@ -44,6 +44,8 @@ const CORPUS_STRINGS = cosmeticData.strings as string[]
 const CORPUS_NUMBERS = cosmeticData.numbers as number[]
 const CORPUS_FUNC_NAMES = cosmeticData.functionNames as string[]
 const CORPUS_PROPS = cosmeticData.properties as string[]
+const PACKAGE_NAMES: string[] = ((cosmeticData as any).packageNames) ?? []
+const IMPORTED_NAMES: string[] = ((cosmeticData as any).importedNames) ?? []
 const VAR_KINDS = ['var', 'let', 'const'] as const
 
 export function encode(message: Uint8Array, options?: EncodeOptions): string {
@@ -111,6 +113,17 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
   }
   function cosmeticFuncName(): string {
     return CORPUS_FUNC_NAMES[rng() % CORPUS_FUNC_NAMES.length]
+  }
+  function cosmeticPackageName(h: number): string {
+    if (PACKAGE_NAMES.length === 0)
+      return 'pkg'
+    return PACKAGE_NAMES[h % PACKAGE_NAMES.length]
+  }
+  function cosmeticImportedName(h: number, offset: number): string {
+    if (IMPORTED_NAMES.length === 0)
+      return nameFromHash(h, offset)
+    const mixed = mixHash(h, offset)
+    return IMPORTED_NAMES[mixed % IMPORTED_NAMES.length]
   }
   function cosmeticFlags(): string {
     const FLAGS = 'dgimsuy'
@@ -250,7 +263,10 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
           ctx.typedScope.push({ name: p, type: 'any' })
         }
         ctx.inFunction = true
+        const savedBucket = ctx.scopeBucket
+        ctx.scopeBucket = 'function-body'
         const body = buildExpr(depth + 1).node
+        ctx.scopeBucket = savedBucket
         ctx.scope = savedScope
         ctx.typedScope = savedTyped
         ctx.inFunction = savedFn
@@ -270,7 +286,10 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
           ctx.typedScope.push({ name: p, type: 'any' })
         }
         ctx.inFunction = true
+        const savedBucket = ctx.scopeBucket
+        ctx.scopeBucket = 'function-body'
         const body = buildExpr(depth + 1).node
+        ctx.scopeBucket = savedBucket
         ctx.scope = savedScope
         ctx.typedScope = savedTyped
         ctx.inFunction = savedFn
@@ -304,15 +323,15 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
       }
       case 'IfStatement': {
         const test = buildExpr(0).node
-        const cons = buildBlock()
-        const alt = c.variant === 0 ? buildBlock() : null
+        const cons = buildBlock('IfStatement', 'consequent')
+        const alt = c.variant === 0 ? buildBlock('IfStatement', 'alternate') : null
         return t.ifStatement(test, t.blockStatement(cons), alt ? t.blockStatement(alt) : null)
       }
       case 'WhileStatement': {
         const test = buildExpr(0).node
         const savedLoop = ctx.inLoop
         ctx.inLoop = true
-        const body = buildBlock()
+        const body = buildBlock('WhileStatement', 'body')
         ctx.inLoop = savedLoop
         return t.whileStatement(test, t.blockStatement(body))
       }
@@ -325,53 +344,129 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         const update = hasUpdate ? buildExpr(0).node : null
         const savedLoop = ctx.inLoop
         ctx.inLoop = true
-        const body = buildBlock()
+        const body = buildBlock('ForStatement', 'body')
         ctx.inLoop = savedLoop
         return t.forStatement(init, test, update, t.blockStatement(body))
       }
       case 'DoWhileStatement': {
         const savedLoop = ctx.inLoop
         ctx.inLoop = true
-        const body = buildBlock()
+        const body = buildBlock('DoWhileStatement', 'body')
         ctx.inLoop = savedLoop
         return t.doWhileStatement(buildExpr(0).node, t.blockStatement(body))
       }
-      case 'BlockStatement': return t.blockStatement(buildBlock())
+      case 'BlockStatement': return t.blockStatement(buildBlock('BlockStatement', 'body'))
       case 'TryStatement': {
-        const tryBody = buildBlock()
+        const tryBody = buildBlock('TryStatement', 'block')
         const paramName = nameFromHash(hash, 999)
-        const catchBody = buildBlock()
+        const catchBody = buildBlock('CatchClause', 'body')
         return t.tryStatement(t.blockStatement(tryBody), t.catchClause(t.identifier(paramName), t.blockStatement(catchBody)))
       }
       case 'SwitchStatement': {
         const disc = buildExpr(0).node
         const cases = Array.from({ length: c.variant }, () => {
           const test = buildExpr(0).node
-          const body = buildBlock()
+          const body = buildBlock('SwitchCase', 'consequent')
           return t.switchCase(test, body)
         })
         return t.switchStatement(disc, cases)
       }
-      case 'LabeledStatement': return t.labeledStatement(t.identifier(labelFromHash(hash)), t.blockStatement(buildBlock()))
+      case 'LabeledStatement': return t.labeledStatement(t.identifier(labelFromHash(hash)), t.blockStatement(buildBlock('LabeledStatement', 'body')))
       case 'ThrowStatement': return t.throwStatement(buildExpr(0).node)
       case 'ReturnStatement': return t.returnStatement(buildExpr(0).node)
       case 'EmptyStatement': return t.emptyStatement()
       case 'DebuggerStatement': return t.debuggerStatement()
       case 'BreakStatement': return t.breakStatement()
       case 'ContinueStatement': return t.continueStatement()
+      case 'ImportDeclaration': {
+        const pkg = cosmeticPackageName(hash)
+        if (c.variant === 0) {
+          // side-effect
+          return t.importDeclaration([], t.stringLiteral(pkg))
+        }
+        if (c.variant === 1) {
+          // default
+          const local = cosmeticImportedName(hash, 1)
+          ctx.scope.push(local)
+          ctx.typedScope.push({ name: local, type: 'any' })
+          return t.importDeclaration(
+            [t.importDefaultSpecifier(t.identifier(local))],
+            t.stringLiteral(pkg),
+          )
+        }
+        // named: variants 2..5 → 1..4 specifiers
+        const count = c.variant - 1
+        const specifiers: t.ImportSpecifier[] = []
+        for (let i = 0; i < count; i++) {
+          const local = cosmeticImportedName(hash, 10 + i)
+          ctx.scope.push(local)
+          ctx.typedScope.push({ name: local, type: 'any' })
+          specifiers.push(t.importSpecifier(t.identifier(local), t.identifier(local)))
+        }
+        return t.importDeclaration(specifiers, t.stringLiteral(pkg))
+      }
+      case 'ExportDefaultDeclaration': {
+        const { node: inner } = buildExpr(0)
+        return t.exportDefaultDeclaration(inner)
+      }
+      case 'ExportNamedDeclaration': {
+        // variants 0..2: variable (var/let/const)
+        if (c.variant >= 0 && c.variant <= 2) {
+          const kind = VAR_KINDS[c.variant]
+          const name = nameFromHash(hash, ctx.scope.length)
+          ctx.scope.push(name)
+          const { node: init, candidate: initC } = buildExpr(0)
+          const inferredType = initC ? inferTypeFromKey(initC.key) : 'any'
+          ctx.typedScope.push({ name, type: inferredType })
+          const decl = t.variableDeclaration(kind, [t.variableDeclarator(t.identifier(name), init)])
+          return t.exportNamedDeclaration(decl, [])
+        }
+        // variants 10..13: function with param count 0..3
+        if (c.variant >= 10 && c.variant <= 13) {
+          const paramCount = c.variant - 10
+          const fnName = cosmeticFuncName()
+          const paramNames = Array.from({ length: paramCount }, (_, i) => nameFromHash(hash, 900 + i))
+          // Enter function scope
+          const savedScope = [...ctx.scope]
+          const savedTyped = [...ctx.typedScope]
+          const savedFn = ctx.inFunction
+          ctx.inFunction = true
+          for (const p of paramNames) {
+            ctx.scope.push(p)
+            ctx.typedScope.push({ name: p, type: 'any' })
+          }
+          const body = t.blockStatement(buildBlock('FunctionDeclaration', 'body'))
+          ctx.scope = savedScope
+          ctx.typedScope = savedTyped
+          ctx.inFunction = savedFn
+          // Bind function name in outer scope
+          ctx.scope.push(fnName)
+          ctx.typedScope.push({ name: fnName, type: 'function' })
+          const fd = t.functionDeclaration(
+            t.identifier(fnName),
+            paramNames.map(p => t.identifier(p)),
+            body,
+          )
+          return t.exportNamedDeclaration(fd, [])
+        }
+        return t.emptyStatement()
+      }
       default: return t.expressionStatement(buildExprNode(c, 0))
     }
   }
 
-  function buildBlock(): t.Statement[] {
+  function buildBlock(parentType: string, slot: string): t.Statement[] {
     if (isPad())
       return []
     const countByte = readBits(8)
     hash = mixHash(hash, countByte)
     ctx.blockDepth++
+    const prevBucket = ctx.scopeBucket
+    ctx.scopeBucket = deriveScopeBucket(parentType, slot)
     const stmts: t.Statement[] = []
     for (let i = 0; i < countByte; i++)
       stmts.push(buildTopLevel())
+    ctx.scopeBucket = prevBucket
     ctx.blockDepth--
     return stmts
   }

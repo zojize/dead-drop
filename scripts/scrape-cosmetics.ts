@@ -7,7 +7,6 @@
  *
  * Usage: bun run scripts/scrape-cosmetics.ts
  */
-import type * as t from '@babel/types'
 import { execSync } from 'node:child_process'
 import { mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -79,6 +78,8 @@ const propNames = new Map<string, number>()
 const stringValues = new Map<string, number>()
 const numberValues = new Map<string, number>()
 const funcNames = new Map<string, number>()
+const packageNames = new Map<string, number>()
+const importedNames = new Map<string, number>()
 
 // JS keywords to exclude from identifier lists
 const KEYWORDS = new Set([
@@ -172,6 +173,20 @@ function walk(node: any): void {
         inc(propNames, node.property.name)
       }
       break
+    case 'ImportDeclaration': {
+      const src = node.source
+      if (src && src.type === 'StringLiteral' && src.value.length > 0 && src.value.length <= 50 && !src.value.startsWith('.') && !src.value.startsWith('/')) {
+        inc(packageNames, src.value)
+      }
+      if (Array.isArray(node.specifiers)) {
+        for (const spec of node.specifiers) {
+          if (spec.local && spec.local.type === 'Identifier' && RE_IDENT.test(spec.local.name) && !KEYWORDS.has(spec.local.name)) {
+            inc(importedNames, spec.local.name)
+          }
+        }
+      }
+      break
+    }
   }
 
   for (const key of Object.keys(node)) {
@@ -270,6 +285,11 @@ for (const n of topNumbers.slice(0, 20)) console.log(`  ${n} (${numberValues.get
 
 console.log('\n=== Top 20 function names ===')
 for (const n of topFuncNames.slice(0, 20)) console.log(`  ${n} (${funcNames.get(n)})`)
+
+console.log('\n=== Top 20 package names ===')
+for (const name of topN(packageNames, 20)) console.log(`  ${name} (${packageNames.get(name)})`)
+console.log('\n=== Top 20 imported names ===')
+for (const name of topN(importedNames, 20)) console.log(`  ${name} (${importedNames.get(name)})`)
 
 // Also collect global built-in methods
 const GLOBALS: Record<string, string[]> = {
@@ -402,6 +422,8 @@ const cosmetics = {
   strings: topStrings,
   numbers: topNumbers,
   functionNames: topFuncNames,
+  packageNames: topN(packageNames, 200),
+  importedNames: topN(importedNames, 200),
   globals: GLOBALS,
 }
 

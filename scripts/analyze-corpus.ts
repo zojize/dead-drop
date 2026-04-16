@@ -12,6 +12,9 @@ import process from 'node:process'
  * Usage: bun run scripts/analyze-corpus.ts
  */
 import { parse } from '@babel/parser'
+import { deriveScopeBucket } from '../packages/core/src/context'
+
+type ScopeBucket = 'top-level' | 'function-body' | 'loop-body' | 'block-body'
 
 const BINARY_OPS = ['+', '-', '*', '/', '%', '|', '&', '^', '<<', '>>', '>>>', '==', '!=', '<', '>', 'in'] as const
 const LOGICAL_OPS = ['&&', '||', '??'] as const
@@ -121,10 +124,13 @@ const PACKAGES = [
   'playwright-core',
 ]
 
-const counts = new Map<string, number>()
-function inc(key: string) {
-  counts.set(key, (counts.get(key) ?? 0) + 1)
+const counts: Record<ScopeBucket, Map<string, number>> = {
+  'top-level': new Map(),
+  'function-body': new Map(),
+  'loop-body': new Map(),
+  'block-body': new Map(),
 }
+const globalCounts = new Map<string, number>()
 
 function exprKey(node: t.Node): string | null {
   switch (node.type) {
@@ -198,31 +204,114 @@ function stmtKey(node: t.Node): string | null {
     case 'BreakStatement': return 'BreakStatement:0'
     case 'ContinueStatement': return 'ContinueStatement:0'
     case 'ExpressionStatement': return 'ExpressionStatement:0'
+    case 'ImportDeclaration': {
+      const n = node as t.ImportDeclaration
+      if (n.specifiers.length === 0)
+        return 'ImportDeclaration:sideEffect'
+      if (n.specifiers.length === 1 && n.specifiers[0].type === 'ImportDefaultSpecifier')
+        return 'ImportDeclaration:default'
+      if (n.specifiers.every(s => s.type === 'ImportSpecifier')) {
+        const count = Math.min(n.specifiers.length, 4)
+        return count >= 1 ? `ImportDeclaration:named:${count}` : null
+      }
+      return null
+    }
+    case 'ExportDefaultDeclaration': return 'ExportDefaultDeclaration:0'
+    case 'ExportNamedDeclaration': {
+      const n = node as t.ExportNamedDeclaration
+      if (n.declaration?.type === 'VariableDeclaration') {
+        const kind = n.declaration.kind
+        const variant = kind === 'var' ? 0 : kind === 'let' ? 1 : 2
+        return `ExportNamedDeclaration:variable:${variant}`
+      }
+      if (n.declaration?.type === 'FunctionDeclaration') {
+        const paramCount = Math.min(n.declaration.params.length, 3)
+        return `ExportNamedDeclaration:function:${paramCount}`
+      }
+      return null
+    }
     default: return null
   }
 }
 
-function walk(node: any): void {
+/**
+ * True if (parentType, slot) is a slot whose contents are statements
+ * (a block, a case consequent, a function body, etc.) — i.e., one where
+ * the scope bucket actually changes per the deriveScopeBucket rules.
+ * Other slots (tests, conditions, init expressions) inherit the parent bucket.
+ */
+function isStatementSlot(parentType: string, slot: string): boolean {
+  if (parentType === 'Program' && slot === 'body')
+    return true
+  if ((parentType === 'FunctionDeclaration' || parentType === 'FunctionExpression' || parentType === 'ArrowFunctionExpression') && slot === 'body')
+    return true
+  if ((parentType === 'ForStatement' || parentType === 'WhileStatement' || parentType === 'DoWhileStatement' || parentType === 'ForOfStatement' || parentType === 'ForInStatement') && slot === 'body')
+    return true
+  if (parentType === 'IfStatement' && (slot === 'consequent' || slot === 'alternate'))
+    return true
+  if (parentType === 'BlockStatement' && slot === 'body')
+    return true
+  if (parentType === 'TryStatement' && (slot === 'block' || slot === 'handler' || slot === 'finalizer'))
+    return true
+  if (parentType === 'CatchClause' && slot === 'body')
+    return true
+  if (parentType === 'SwitchCase' && slot === 'consequent')
+    return true
+  if (parentType === 'LabeledStatement' && slot === 'body')
+    return true
+  return false
+}
+
+function walk(node: any, bucket: ScopeBucket, isDirectStatement: boolean): void {
   if (!node || typeof node !== 'object')
     return
+
+  // Transparent wrapper: a BlockStatement that IS a function or loop body
+  // shouldn't itself count as the bucket's statement — its contents are the
+  // real function-body/loop-body statements. Count the wrapper only globally
+  // and descend into its body preserving the current bucket.
+  if (node.type === 'BlockStatement' && isDirectStatement && (bucket === 'function-body' || bucket === 'loop-body')) {
+    globalCounts.set('BlockStatement:0', (globalCounts.get('BlockStatement:0') ?? 0) + 1)
+    for (const stmt of node.body ?? []) {
+      walk(stmt, bucket, true)
+    }
+    return
+  }
+
   const ek = exprKey(node)
-  if (ek)
-    inc(ek)
   const sk = stmtKey(node)
-  if (sk && !ek)
-    inc(sk)
-  for (const key of Object.keys(node)) {
-    if (key === 'type' || key === 'start' || key === 'end' || key === 'loc' || key === 'extra' || key === 'leadingComments' || key === 'trailingComments')
+  const key = sk ?? ek
+  if (key) {
+    // Always accumulate globally (all-node distribution)
+    globalCounts.set(key, (globalCounts.get(key) ?? 0) + 1)
+    // Only count in bucket if this is a direct statement child of its parent.
+    // Without this, top-level would count every Identifier nested inside every
+    // import/var-decl/etc., drowning out the actual statement-type distribution.
+    if (isDirectStatement)
+      counts[bucket].set(key, (counts[bucket].get(key) ?? 0) + 1)
+  }
+
+  for (const slot of Object.keys(node)) {
+    if (slot === 'type' || slot === 'start' || slot === 'end' || slot === 'loc' || slot === 'extra' || slot === 'leadingComments' || slot === 'trailingComments')
       continue
-    const val = node[key]
+    const val = node[slot]
+    // Derive child bucket for slots that introduce a new statement context.
+    // For expression slots (init, test, update, etc.), inherit parent bucket —
+    // weights for expressions are counted in whatever statement-level bucket
+    // they appear in.
+    const slotIsStatement = isStatementSlot(node.type, slot)
+    const childBucket: ScopeBucket = slotIsStatement
+      ? deriveScopeBucket(node.type, slot)
+      : bucket
+
     if (Array.isArray(val)) {
       for (const item of val) {
         if (item && typeof item === 'object' && item.type)
-          walk(item)
+          walk(item, childBucket, slotIsStatement)
       }
     }
     else if (val && typeof val === 'object' && val.type) {
-      walk(val)
+      walk(val, childBucket, slotIsStatement)
     }
   }
 }
@@ -265,13 +354,12 @@ console.log('Finding JS files...')
 const jsFiles = findJsFiles(join(tmpDir, 'node_modules'))
 console.log(`Found ${jsFiles.length} JS files\n`)
 
-let totalNodes = 0
 let parsedFiles = 0
 let failedFiles = 0
 
 for (let i = 0; i < jsFiles.length; i++) {
   if (i % 500 === 0 && i > 0) {
-    process.stdout.write(`  [${i}/${jsFiles.length}] ${totalNodes} nodes so far...\r`)
+    process.stdout.write(`  [${i}/${jsFiles.length}]\r`)
   }
   try {
     const code = readFileSync(jsFiles[i], 'utf8')
@@ -280,9 +368,7 @@ for (let i = 0; i < jsFiles.length; i++) {
       errorRecovery: true,
       plugins: ['jsx', 'typescript', ['optionalChainingAssign', { version: '2023-07' }]],
     })
-    const before = [...counts.values()].reduce((a, b) => a + b, 0)
-    walk(ast.program)
-    totalNodes += [...counts.values()].reduce((a, b) => a + b, 0) - before
+    walk(ast.program, 'top-level', false)
     parsedFiles++
   }
   catch {
@@ -290,30 +376,45 @@ for (let i = 0; i < jsFiles.length; i++) {
   }
 }
 
-console.log(`\nParsed ${parsedFiles} files (${failedFiles} failed), ${totalNodes} total nodes\n`)
+console.log(`\nParsed ${parsedFiles} files (${failedFiles} failed)\n`)
 
-// Sort by frequency and print top results
-const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1])
-console.log('=== Top 80 frequencies ===')
-for (const [key, count] of sorted.slice(0, 80)) {
-  const pct = ((count / totalNodes) * 100).toFixed(2)
-  const bar = '█'.repeat(Math.ceil(Number(pct) * 2))
-  console.log(`  ${key.padEnd(30)} ${String(count).padStart(10)}  ${pct.padStart(6)}%  ${bar}`)
+// Print summary per bucket
+console.log('\n=== Per-bucket top 20 ===')
+for (const bucket of ['top-level', 'function-body', 'loop-body', 'block-body'] as ScopeBucket[]) {
+  const sorted = [...counts[bucket].entries()].sort((a, b) => b[1] - a[1])
+  console.log(`\n--- ${bucket} ---`)
+  for (const [key, count] of sorted.slice(0, 20)) {
+    const totalInBucket = [...counts[bucket].values()].reduce((a, b) => a + b, 0)
+    const pct = totalInBucket > 0 ? ((count / totalInBucket) * 100).toFixed(2) : '0.00'
+    console.log(`  ${key.padEnd(30)} ${String(count).padStart(10)}  ${pct.padStart(6)}%`)
+  }
 }
 
-// Output weight map
-const maxCount = sorted[0][1]
-const weights: Record<string, number> = {}
-for (const [key, count] of sorted) {
-  // Scale to 0.01-10 range, with minimum 0.01 for any observed candidate
-  weights[key] = Math.max(0.01, Math.round((count / maxCount) * 1000) / 100)
+// Build bucketed weight output
+function toWeights(m: Map<string, number>): Record<string, number> {
+  if (m.size === 0)
+    return {}
+  const sorted = [...m.entries()].sort((a, b) => b[1] - a[1])
+  const maxCount = sorted[0][1]
+  const out: Record<string, number> = {}
+  for (const [key, count] of sorted) {
+    out[key] = Math.max(0.01, Math.round((count / maxCount) * 1000) / 100)
+  }
+  return out
 }
 
-// Write to JSON file for use in context.ts
+const nested = {
+  'top-level': toWeights(counts['top-level']),
+  'function-body': toWeights(counts['function-body']),
+  'loop-body': toWeights(counts['loop-body']),
+  'block-body': toWeights(counts['block-body']),
+  'global': toWeights(globalCounts),
+}
+
 const outPath = join(process.cwd(), 'packages/core/src/corpus-weights.json')
-writeFileSync(outPath, `${JSON.stringify(weights, null, 2)}\n`)
+writeFileSync(outPath, `${JSON.stringify(nested, null, 2)}\n`)
 console.log(`\nWeights written to ${outPath}`)
-console.log(`${Object.keys(weights).length} unique candidate keys observed`)
+console.log(`Sizes — top-level: ${Object.keys(nested['top-level']).length}, function-body: ${Object.keys(nested['function-body']).length}, loop-body: ${Object.keys(nested['loop-body']).length}, block-body: ${Object.keys(nested['block-body']).length}, global: ${Object.keys(nested.global).length}`)
 
 // Cleanup
 execSync(`rm -rf "${tmpDir}"`)

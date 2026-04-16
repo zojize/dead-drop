@@ -3,11 +3,12 @@
 ## Pre-commit checklist (ALWAYS do all of these before committing)
 
 1. `bun run --filter '@zojize/dead-drop' build` — build core
-2. `bun run typecheck` — typecheck all packages
-3. `bun run knip` — no unused deps/exports
-4. `bun run test` — all tests pass
-5. `cd playground && bunx vite build` — playground builds
-6. Check README for stale documentation
+2. `bun run lint` — zero errors (autofix with `bun run lint:fix`)
+3. `bun run typecheck` — typecheck all packages
+4. `bun run knip` — no unused deps/exports
+5. `bun run test` — all tests pass
+6. `cd playground && bunx vite build` — playground builds
+7. Check README for stale documentation
 
 ## Post-push checklist
 
