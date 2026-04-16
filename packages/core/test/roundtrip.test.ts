@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { generateCompact } from '../src/codegen'
 import { decode } from '../src/decode'
 import { encode } from '../src/encode'
+import { createCodec } from '../src/lib'
 
 function testRoundTrip(input: Uint8Array) {
   const js = encode(input)
@@ -317,6 +318,18 @@ describe('encode output validity', () => {
   })
 })
 
+describe('import candidates', () => {
+  it('round-trips messages with import-candidate eligibility', () => {
+    for (let seed = 0; seed < 50; seed++) {
+      const msg = new Uint8Array([seed, (seed * 7) & 0xFF, (seed * 13) & 0xFF])
+      const codec = createCodec({ seed })
+      const js = codec.encode(msg)
+      const back = codec.decode(js)
+      expect(back).toEqual(msg)
+    }
+  })
+})
+
 describe('maxExprDepth', () => {
   it('round-trips with depth 10', () => {
     for (let i = 0; i < 50; i++) {
@@ -367,6 +380,36 @@ describe('maxExprDepth', () => {
       outputs.add(encode(msg, { maxExprDepth: d }))
     }
     expect(outputs.size).toBeGreaterThanOrEqual(2)
+  })
+
+  it('round-trips messages that may encode as ExportDefaultDeclaration', () => {
+    for (let seed = 100; seed < 150; seed++) {
+      const msg = new Uint8Array([seed, (seed * 11) & 0xFF, 0xAB, 0xCD])
+      const codec = createCodec({ seed })
+      const js = codec.encode(msg)
+      const back = codec.decode(js)
+      expect(back).toEqual(msg)
+    }
+  })
+
+  it('top-level output contains import/export statements across many keys', () => {
+    let hasImport = 0
+    let hasExport = 0
+    const N = 200
+    for (let k = 0; k < N; k++) {
+      const msg = new Uint8Array(Array.from({ length: 16 }, (_, i) => (k * 13 + i * 7) & 0xFF))
+      const codec = createCodec({ key: k })
+      const js = codec.encode(msg)
+      if (/\bimport\s/.test(js))
+        hasImport++
+      if (/\bexport\s/.test(js))
+        hasExport++
+      const back = codec.decode(js)
+      expect(Array.from(back)).toEqual(Array.from(msg))
+    }
+    // Lower bounds — corpus weights drive appearance. If these fail, corpus
+    // weights may have drifted or the bucket transitions aren't firing.
+    expect(hasImport + hasExport).toBeGreaterThan(N * 0.02)
   })
 
   it('lorem roundtrips with depth 64', () => {

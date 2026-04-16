@@ -1,22 +1,7 @@
 import type * as t from '@babel/types'
-import type { EncodingContext } from './context'
+import type { EncodingContext, ScopeBucket } from './context'
 import { parse } from '@babel/parser'
-import {
-  ASSIGN_OPS,
-  BINARY_OPS,
-  bitWidth,
-  BitWriter,
-  buildReverseTable,
-  buildTable,
-  filterCandidates,
-  inferTypeFromKey,
-  initialContext,
-  LOGICAL_OPS,
-  MAX_EXPR_DEPTH,
-  mixHash,
-  nameFromHash,
-  UNARY_OPS,
-} from './context'
+import { ASSIGN_OPS, BINARY_OPS, bitWidth, BitWriter, buildReverseTable, buildTable, deriveScopeBucket, filterCandidates, inferTypeFromKey, initialContext, LOGICAL_OPS, MAX_EXPR_DEPTH, mixHash, nameFromHash, UNARY_OPS } from './context'
 
 export interface DecodeOptions {
   /** Structural key — must match the key used during encoding. */
@@ -35,9 +20,13 @@ type WorkItem
     | { kind: 'inloop-enter' }
     | { kind: 'inloop-exit', saved: boolean }
     | { kind: 'var-type-push', name: string, type: string }
+    | { kind: 'scope-push', name: string, type: string }
+    | { kind: 'bucket-enter', bucket: ScopeBucket }
+    | { kind: 'bucket-exit', prev: ScopeBucket }
 
 export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
   const ast = parse(jsSource, {
+    sourceType: 'module',
     plugins: [['optionalChainingAssign', { version: '2023-07' }]],
   })
 
@@ -88,6 +77,9 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
 
   function stmtKey(node: t.Node): string {
     switch (node.type) {
+      // Directive: Babel parses leading string literals as directives rather than ExpressionStatements.
+      // The encoder emitted an ExpressionStatement(StringLiteral), so map back to StringLiteral:0.
+      case 'Directive': return 'StringLiteral:0'
       case 'VariableDeclaration': return `VariableDeclaration:${node.kind === 'var' ? 0 : node.kind === 'let' ? 1 : 2}`
       case 'IfStatement': return `IfStatement:${(node as t.IfStatement).alternate ? 0 : 1}`
       case 'WhileStatement': return 'WhileStatement:0'
@@ -106,6 +98,33 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
       case 'DebuggerStatement': return 'DebuggerStatement:0'
       case 'BreakStatement': return 'BreakStatement:0'
       case 'ContinueStatement': return 'ContinueStatement:0'
+      case 'ImportDeclaration': {
+        const n = node as t.ImportDeclaration
+        if (n.specifiers.length === 0)
+          return 'ImportDeclaration:sideEffect'
+        if (n.specifiers.length === 1 && n.specifiers[0].type === 'ImportDefaultSpecifier')
+          return 'ImportDeclaration:default'
+        if (n.specifiers.every(s => s.type === 'ImportSpecifier')) {
+          const count = n.specifiers.length
+          if (count >= 1 && count <= 4)
+            return `ImportDeclaration:named:${count}`
+        }
+        return 'ImportDeclaration:default' // fallback for unusual shapes
+      }
+      case 'ExportDefaultDeclaration': return 'ExportDefaultDeclaration:0'
+      case 'ExportNamedDeclaration': {
+        const n = node as t.ExportNamedDeclaration
+        if (n.declaration?.type === 'VariableDeclaration') {
+          const kind = n.declaration.kind
+          const variant = kind === 'var' ? 0 : kind === 'let' ? 1 : 2
+          return `ExportNamedDeclaration:variable:${variant}`
+        }
+        if (n.declaration?.type === 'FunctionDeclaration') {
+          const paramCount = Math.min((n.declaration as t.FunctionDeclaration).params.length, 3)
+          return `ExportNamedDeclaration:function:${paramCount}`
+        }
+        return 'ExportNamedDeclaration:variable:0'
+      }
       default: return exprKey(node)
     }
   }
@@ -193,11 +212,13 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         const n = node as t.ArrowFunctionExpression
         const params = n.params.map((_, i) => nameFromHash(hash, 900 + i))
         work.push({ kind: 'scope-restore', scope: [...ctx.scope], typedScope: [...ctx.typedScope], inFunction: ctx.inFunction })
+        work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
         const bodyNode = n.body.type === 'BlockStatement'
           ? ((n.body as t.BlockStatement).body[0] as t.ReturnStatement)?.argument
           : n.body
         if (bodyNode)
           work.push({ kind: 'expr', node: bodyNode, depth: d })
+        work.push({ kind: 'bucket-enter', bucket: 'function-body' })
         // Push scope-save AFTER body (LIFO: save executes first)
         work.push({ kind: 'scope-save', scope: params, typedScope: params.map(p => ({ name: p, type: 'any' })), inFunction: true })
         break
@@ -206,9 +227,11 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         const n = node as t.FunctionExpression
         const params = n.params.map((_, i) => nameFromHash(hash, 900 + i))
         work.push({ kind: 'scope-restore', scope: [...ctx.scope], typedScope: [...ctx.typedScope], inFunction: ctx.inFunction })
+        work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
         const ret = n.body.body[0]
         if (ret?.type === 'ReturnStatement')
           work.push({ kind: 'expr', node: (ret as t.ReturnStatement).argument!, depth: d })
+        work.push({ kind: 'bucket-enter', bucket: 'function-body' })
         work.push({ kind: 'scope-save', scope: params, typedScope: params.map(p => ({ name: p, type: 'any' })), inFunction: true })
         break
       }
@@ -227,6 +250,9 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
 
   function pushStmtChildren(node: t.Node): void {
     switch (node.type) {
+      case 'Directive':
+        // Directive is a leaf — no children to push (treated as StringLiteral:0, a leaf expression)
+        break
       case 'ExpressionStatement':
         // Expression was directly selected as a candidate in statement context
         pushExprChildren((node as t.ExpressionStatement).expression, 0)
@@ -240,26 +266,35 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
       }
       case 'IfStatement': {
         const n = node as t.IfStatement
-        if (n.alternate)
+        if (n.alternate) {
+          work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
           work.push({ kind: 'block', stmts: (n.alternate as t.BlockStatement).body })
+          work.push({ kind: 'bucket-enter', bucket: deriveScopeBucket('IfStatement', 'alternate') })
+        }
+        work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
         work.push({ kind: 'block', stmts: (n.consequent as t.BlockStatement).body })
+        work.push({ kind: 'bucket-enter', bucket: deriveScopeBucket('IfStatement', 'consequent') })
         work.push({ kind: 'expr', node: n.test, depth: 0 })
         break
       }
       case 'WhileStatement': {
         const n = node as t.WhileStatement
-        // LIFO order: test → inloop-enter → block → inloop-exit
+        // LIFO order: test → inloop-enter → bucket-enter → block → bucket-exit → inloop-exit
         work.push({ kind: 'inloop-exit', saved: ctx.inLoop })
+        work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
         work.push({ kind: 'block', stmts: (n.body as t.BlockStatement).body })
+        work.push({ kind: 'bucket-enter', bucket: deriveScopeBucket('WhileStatement', 'body') })
         work.push({ kind: 'inloop-enter' })
         work.push({ kind: 'expr', node: n.test, depth: 0 })
         break
       }
       case 'ForStatement': {
         const n = node as t.ForStatement
-        // LIFO order: init → test → update → inloop-enter → block → inloop-exit
+        // LIFO order: init → test → update → inloop-enter → bucket-enter → block → bucket-exit → inloop-exit
         work.push({ kind: 'inloop-exit', saved: ctx.inLoop })
+        work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
         work.push({ kind: 'block', stmts: (n.body as t.BlockStatement).body })
+        work.push({ kind: 'bucket-enter', bucket: deriveScopeBucket('ForStatement', 'body') })
         work.push({ kind: 'inloop-enter' })
         if (n.update)
           work.push({ kind: 'expr', node: n.update, depth: 0 })
@@ -271,26 +306,38 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
       }
       case 'DoWhileStatement': {
         const n = node as t.DoWhileStatement
-        // LIFO order: inloop-enter → block → inloop-exit → test
+        // LIFO order: inloop-enter → bucket-enter → block → bucket-exit → inloop-exit → test
         work.push({ kind: 'expr', node: n.test, depth: 0 })
         work.push({ kind: 'inloop-exit', saved: ctx.inLoop })
+        work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
         work.push({ kind: 'block', stmts: (n.body as t.BlockStatement).body })
+        work.push({ kind: 'bucket-enter', bucket: deriveScopeBucket('DoWhileStatement', 'body') })
         work.push({ kind: 'inloop-enter' })
         break
       }
       case 'BlockStatement':
+        work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
         work.push({ kind: 'block', stmts: (node as t.BlockStatement).body })
+        work.push({ kind: 'bucket-enter', bucket: deriveScopeBucket('BlockStatement', 'body') })
         break
       case 'TryStatement': {
         const n = node as t.TryStatement
+        // Catch body (pushed first = drained last)
+        work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
         work.push({ kind: 'block', stmts: n.handler!.body.body })
+        work.push({ kind: 'bucket-enter', bucket: deriveScopeBucket('CatchClause', 'body') })
+        // Try block (pushed second = drained first)
+        work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
         work.push({ kind: 'block', stmts: n.block.body })
+        work.push({ kind: 'bucket-enter', bucket: deriveScopeBucket('TryStatement', 'block') })
         break
       }
       case 'SwitchStatement': {
         const n = node as t.SwitchStatement
         for (let i = n.cases.length - 1; i >= 0; i--) {
+          work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
           work.push({ kind: 'block', stmts: n.cases[i].consequent })
+          work.push({ kind: 'bucket-enter', bucket: deriveScopeBucket('SwitchCase', 'consequent') })
           if (n.cases[i].test)
             work.push({ kind: 'expr', node: n.cases[i].test!, depth: 0 })
         }
@@ -298,7 +345,9 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         break
       }
       case 'LabeledStatement':
+        work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
         work.push({ kind: 'block', stmts: ((node as t.LabeledStatement).body as t.BlockStatement).body })
+        work.push({ kind: 'bucket-enter', bucket: deriveScopeBucket('LabeledStatement', 'body') })
         break
       case 'ThrowStatement':
         work.push({ kind: 'expr', node: (node as t.ThrowStatement).argument, depth: 0 })
@@ -307,14 +356,59 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         if ((node as t.ReturnStatement).argument)
           work.push({ kind: 'expr', node: (node as t.ReturnStatement).argument!, depth: 0 })
         break
+      case 'ImportDeclaration': {
+        const n = node as t.ImportDeclaration
+        for (const spec of n.specifiers) {
+          if (spec.local && spec.local.type === 'Identifier') {
+            ctx.scope.push(spec.local.name)
+            ctx.typedScope.push({ name: spec.local.name, type: 'any' })
+          }
+        }
+        break
+      }
+      case 'ExportDefaultDeclaration': {
+        const n = node as t.ExportDefaultDeclaration
+        work.push({ kind: 'expr', node: n.declaration as t.Node, depth: 0 })
+        break
+      }
+      case 'ExportNamedDeclaration': {
+        const n = node as t.ExportNamedDeclaration
+        if (n.declaration?.type === 'VariableDeclaration') {
+          const vd = n.declaration as t.VariableDeclaration
+          const name = nameFromHash(hash, ctx.scope.length)
+          ctx.scope.push(name)
+          work.push({ kind: 'var-decl', name, initNode: vd.declarations[0].init!, depth: 0 })
+        }
+        else if (n.declaration?.type === 'FunctionDeclaration') {
+          const fd = n.declaration as t.FunctionDeclaration
+          const fnName = (fd.id as t.Identifier).name
+          const params = fd.params.map((_, i) => nameFromHash(hash, 900 + i))
+          const bodyStmts = fd.body.body
+          // LIFO: push in reverse order of desired execution
+          // Execution order: scope-save → bucket-enter → block → bucket-exit → scope-restore → scope-push
+          work.push({ kind: 'scope-push', name: fnName, type: 'function' })
+          work.push({ kind: 'scope-restore', scope: [...ctx.scope], typedScope: [...ctx.typedScope], inFunction: ctx.inFunction })
+          work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
+          work.push({ kind: 'block', stmts: bodyStmts })
+          work.push({ kind: 'bucket-enter', bucket: 'function-body' })
+          work.push({ kind: 'scope-save', scope: params, typedScope: params.map(p => ({ name: p, type: 'any' })), inFunction: true })
+        }
+        break
+      }
     }
   }
 
   // ─── Main iterative loop ───────────────────────────────────────────
 
-  // Seed with top-level statements (reverse for LIFO)
+  // Seed with top-level statements (reverse for LIFO).
+  // Also handle directives: Babel treats leading string-literal statements as Directive nodes
+  // (stored in ast.program.directives rather than ast.program.body). The encoder emitted them
+  // as ExpressionStatement(StringLiteral), so we must decode them the same way.
+  // Directives come before body in source order; push body first (processed last) then directives.
   for (let i = ast.program.body.length - 1; i >= 0; i--)
     work.push({ kind: 'stmt', node: ast.program.body[i] })
+  for (let i = (ast.program.directives?.length ?? 0) - 1; i >= 0; i--)
+    work.push({ kind: 'stmt', node: ast.program.directives![i] })
 
   while (work.length > 0) {
     const item = work.pop()!
@@ -391,6 +485,11 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         ctx.typedScope.push({ name: item.name, type: item.type as any })
         break
 
+      case 'scope-push':
+        ctx.scope.push(item.name)
+        ctx.typedScope.push({ name: item.name, type: item.type as any })
+        break
+
       case 'scope-save':
         for (const p of item.scope) ctx.scope.push(p)
         for (const e of item.typedScope) ctx.typedScope.push(e)
@@ -401,6 +500,14 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         ctx.scope = item.scope
         ctx.typedScope = item.typedScope
         ctx.inFunction = item.inFunction
+        break
+
+      case 'bucket-enter':
+        ctx.scopeBucket = item.bucket
+        break
+
+      case 'bucket-exit':
+        ctx.scopeBucket = item.prev
         break
 
       case 'var-decl': {
