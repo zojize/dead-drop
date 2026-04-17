@@ -3,6 +3,7 @@ import * as t from '@babel/types'
 import { generateCompact } from './codegen'
 import {
   ASSIGN_OPS,
+  bigramKey,
   BINARY_OPS,
   bitWidth,
   BitWriter,
@@ -39,13 +40,13 @@ function createRng(seed: number) {
   }
 }
 
-const CORPUS_IDENTS = cosmeticData.identifiers as string[]
-const CORPUS_STRINGS = cosmeticData.strings as string[]
-const CORPUS_NUMBERS = cosmeticData.numbers as number[]
-const CORPUS_FUNC_NAMES = cosmeticData.functionNames as string[]
-const CORPUS_PROPS = cosmeticData.properties as string[]
-const PACKAGE_NAMES: string[] = ((cosmeticData as any).packageNames) ?? []
-const IMPORTED_NAMES: string[] = ((cosmeticData as any).importedNames) ?? []
+const CORPUS_IDENTS = cosmeticData.identifiers
+const CORPUS_STRINGS = cosmeticData.strings
+const CORPUS_NUMBERS = cosmeticData.numbers
+const CORPUS_FUNC_NAMES = cosmeticData.functionNames
+const CORPUS_PROPS = cosmeticData.properties
+const PACKAGE_NAMES: string[] = (cosmeticData.packageNames) ?? []
+const IMPORTED_NAMES: string[] = (cosmeticData.importedNames) ?? []
 const VAR_KINDS = ['var', 'let', 'const'] as const
 
 export function encode(message: Uint8Array, options?: EncodeOptions): string {
@@ -180,20 +181,20 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
       case 'RegExpLiteral': return t.regExpLiteral(cosmeticTemplateRaw(), cosmeticFlags())
       case 'ThisExpression': return t.thisExpression()
       case 'BinaryExpression':
-        return t.binaryExpression(BINARY_OPS[c.variant] as any, child(), child())
+        return t.binaryExpression(BINARY_OPS[c.variant], child(), child())
       case 'LogicalExpression':
-        return t.logicalExpression(LOGICAL_OPS[c.variant] as any, child(), child())
+        return t.logicalExpression(LOGICAL_OPS[c.variant], child(), child())
       case 'AssignmentExpression': {
         const lhs = ctx.typedScope.length > 0 ? ctx.typedScope[rng() % ctx.typedScope.length].name : cosmeticIdent()
-        return t.assignmentExpression(ASSIGN_OPS[c.variant] as any, t.identifier(lhs), child())
+        return t.assignmentExpression(ASSIGN_OPS[c.variant], t.identifier(lhs), child())
       }
       case 'UnaryExpression':
-        return t.unaryExpression(UNARY_OPS[c.variant] as any, child(), true)
+        return t.unaryExpression(UNARY_OPS[c.variant], child(), true)
       case 'UpdateExpression': {
         const op = UPDATE_OPS[Math.floor(c.variant / 2)]
         const prefix = c.variant % 2 === 0
         const name = ctx.typedScope.length > 0 ? ctx.typedScope[rng() % ctx.typedScope.length].name : cosmeticIdent()
-        return t.updateExpression(op as any, t.identifier(name), prefix)
+        return t.updateExpression(op, t.identifier(name), prefix)
       }
       case 'ConditionalExpression':
         return t.conditionalExpression(child(), child(), child())
@@ -463,28 +464,37 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
     ctx.blockDepth++
     const prevBucket = ctx.scopeBucket
     ctx.scopeBucket = deriveScopeBucket(parentType, slot)
+    const savedPrev = ctx.prevStmtKey
+    ctx.prevStmtKey = '<START>'
     const stmts: t.Statement[] = []
-    for (let i = 0; i < countByte; i++)
-      stmts.push(buildTopLevel())
+    for (let i = 0; i < countByte; i++) {
+      const { stmt, candidate } = buildTopLevelWithCandidate()
+      stmts.push(stmt)
+      ctx.prevStmtKey = candidate ? bigramKey(candidate.key, candidate.isStatement) : '<START>'
+    }
+    ctx.prevStmtKey = savedPrev
     ctx.scopeBucket = prevBucket
     ctx.blockDepth--
     return stmts
   }
 
-  function buildTopLevel(): t.Statement {
+  function buildTopLevelWithCandidate(): { stmt: t.Statement, candidate: Candidate | null } {
     if (isPad())
-      return t.expressionStatement(padLeafExpr())
+      return { stmt: t.expressionStatement(padLeafExpr()), candidate: null }
     const candidates = filterCandidates(ctx)
     const table = buildTable(candidates, hash)
     const bits = bitWidth(table.length)
     const value = readBits(bits)
     const c = table[value]
     hash = mixHash(hash, value)
-    return buildStatement(c)
+    return { stmt: buildStatement(c), candidate: c }
   }
 
   const body: t.Statement[] = []
-  while (!isPad())
-    body.push(buildTopLevel())
+  while (!isPad()) {
+    const { stmt, candidate } = buildTopLevelWithCandidate()
+    body.push(stmt)
+    ctx.prevStmtKey = candidate ? bigramKey(candidate.key, candidate.isStatement) : '<START>'
+  }
   return generateCompact(t.program(body))
 }
