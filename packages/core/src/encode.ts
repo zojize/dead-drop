@@ -5,9 +5,8 @@ import {
   ASSIGN_OPS,
   bigramKey,
   BINARY_OPS,
-  bitWidth,
-  BitWriter,
-  buildTable,
+  buildBlockCDF,
+  buildCDF,
   deriveScopeBucket,
   filterCandidates,
   inferTypeFromKey,
@@ -17,6 +16,8 @@ import {
   MAX_EXPR_DEPTH,
   mixHash,
   nameFromHash,
+  RANS_L,
+  ransDecode,
   UNARY_OPS,
   UPDATE_OPS,
 } from './context'
@@ -60,32 +61,35 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
   prefixed[3] = length & 0xFF
   prefixed.set(message, 4)
 
-  // Convert to a bitstream for variable-width reads
-  const writer = new BitWriter()
-  // Write all prefixed bytes as 8-bit values into the writer (source bits)
-  for (let i = 0; i < prefixed.length; i++)
-    writer.write(prefixed[i], 8)
-  const allBits = writer.toBytes()
-  // Now read from allBits as a bitstream
-  const totalBits = prefixed.length * 8
-  let bitPos = 0
+  // Initialize rANS state from message bits
+  const prefixedBits: number[] = []
+  for (let i = 0; i < prefixed.length; i++) {
+    for (let b = 7; b >= 0; b--)
+      prefixedBits.push((prefixed[i] >>> b) & 1)
+  }
+  // Reverse bits so pop() reads them in forward order
+  prefixedBits.reverse()
+
+  // Initialize state by reading bits until normalized
+  let ransState = RANS_L
+  while (ransState < (RANS_L << 1) && prefixedBits.length > 0)
+    ransState = (ransState << 1) | prefixedBits.pop()!
 
   const key = opts.key
   let hash = key != null ? mixHash(0xDEADD, key) : 0xDEADD
   const rng = createRng(opts.seed ?? length)
   const ctx: EncodingContext = { ...initialContext(), maxExprDepth: opts.maxExprDepth ?? MAX_EXPR_DEPTH }
-  const isPad = () => bitPos >= totalBits
+  const isPad = () => prefixedBits.length === 0 && ransState <= RANS_L
 
-  /** Read `width` bits from the input bitstream. */
-  function readBits(width: number): number {
-    let value = 0
-    for (let i = 0; i < width; i++) {
-      const byteIdx = bitPos >>> 3
-      const bitIdx = 7 - (bitPos & 7)
-      value = (value << 1) | ((allBits[byteIdx] >>> bitIdx) & 1)
-      bitPos++
-    }
-    return value
+  /** Select a symbol from the CDF using rANS state. Returns symbol index. */
+  function selectSymbol(cdf: ReturnType<typeof buildCDF>): number {
+    // Renormalize: refill state from message bits
+    while (ransState < RANS_L && prefixedBits.length > 0)
+      ransState = (ransState << 1) | prefixedBits.pop()!
+
+    const result = ransDecode(ransState, cdf, prefixedBits)
+    ransState = result.newState
+    return result.symbol
   }
 
   function cosmeticIdent(): string {
@@ -157,11 +161,10 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
 
     const exprCtx = { ...ctx, expressionOnly: true, exprDepth: depth }
     const candidates = filterCandidates(exprCtx)
-    const table = buildTable(candidates, hash)
-    const bits = bitWidth(table.length)
-    const value = readBits(bits)
-    const c = table[value]
-    hash = mixHash(hash, value)
+    const cdf = buildCDF(candidates)
+    const idx = selectSymbol(cdf)
+    const c = cdf.candidates[idx]
+    hash = mixHash(hash, idx)
 
     const cosmetic = ctx.maxExprDepth < Infinity && depth >= ctx.maxExprDepth
     const node = buildExprNode(c, depth, cosmetic)
@@ -459,8 +462,10 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
   function buildBlock(parentType: string, slot: string): t.Statement[] {
     if (isPad())
       return []
-    const countByte = readBits(8)
-    hash = mixHash(hash, countByte)
+    const blockCdf = buildBlockCDF()
+    const countIdx = selectSymbol(blockCdf)
+    hash = mixHash(hash, countIdx)
+    const countByte = blockCdf.candidates[countIdx].variant
     ctx.blockDepth++
     const prevBucket = ctx.scopeBucket
     ctx.scopeBucket = deriveScopeBucket(parentType, slot)
@@ -482,11 +487,10 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
     if (isPad())
       return { stmt: t.expressionStatement(padLeafExpr()), candidate: null }
     const candidates = filterCandidates(ctx)
-    const table = buildTable(candidates, hash)
-    const bits = bitWidth(table.length)
-    const value = readBits(bits)
-    const c = table[value]
-    hash = mixHash(hash, value)
+    const cdf = buildCDF(candidates)
+    const idx = selectSymbol(cdf)
+    const c = cdf.candidates[idx]
+    hash = mixHash(hash, idx)
     return { stmt: buildStatement(c), candidate: c }
   }
 
