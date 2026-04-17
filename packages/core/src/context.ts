@@ -203,7 +203,12 @@ function lookupWeight(key: string, bucket: ScopeBucket = 'top-level'): number {
   return W[bucket]?.[key] ?? W.global[key] ?? 0.01
 }
 
-/** Map a candidate key to its coarsened bigram key for transition lookup. */
+/**
+ * Map a candidate key to its coarsened bigram key for transition lookup.
+ * Expression candidates map to synthetic aggregate key 'ExpressionStatement:0'
+ * (not a real candidate — ExpressionStatement is never in the pool directly).
+ * Corpus scraper emits this same key for ExpressionStatement nodes.
+ */
 export function bigramKey(candidateKey: string, isStatement: boolean): string {
   return isStatement ? candidateKey : 'ExpressionStatement:0'
 }
