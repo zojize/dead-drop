@@ -1,7 +1,7 @@
 import type * as t from '@babel/types'
-import type { EncodingContext, ScopeBucket } from './context'
+import type { CDF, EncodingContext, ScopeBucket } from './context'
 import { parse } from '@babel/parser'
-import { ASSIGN_OPS, bigramKey, BINARY_OPS, bitWidth, BitWriter, buildReverseTable, buildTable, deriveScopeBucket, filterCandidates, inferTypeFromKey, initialContext, LOGICAL_OPS, MAX_EXPR_DEPTH, mixHash, nameFromHash, UNARY_OPS } from './context'
+import { ASSIGN_OPS, bigramKey, BINARY_OPS, buildBlockCDF, buildCDF, deriveScopeBucket, filterCandidates, inferTypeFromKey, initialContext, LOGICAL_OPS, MAX_EXPR_DEPTH, mixHash, nameFromHash, RANS_L, ransEncode, UNARY_OPS } from './context'
 
 export interface DecodeOptions {
   /** Structural key — must match the key used during encoding. */
@@ -30,7 +30,7 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
     plugins: [['optionalChainingAssign', { version: '2023-07' }]],
   })
 
-  const out = new BitWriter()
+  const pairs: { cdf: CDF, symbol: number }[] = []
   const key = options?.key
   let hash = key != null ? mixHash(0xDEADD, key) : 0xDEADD
   const ctx: EncodingContext = { ...initialContext(), maxExprDepth: options?.maxExprDepth ?? MAX_EXPR_DEPTH }
@@ -424,19 +424,11 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
       case 'expr': {
         const exprCtx = { ...ctx, expressionOnly: true, exprDepth: item.depth }
         const candidates = filterCandidates(exprCtx)
-        const table = buildTable(candidates, hash)
-        const bits = bitWidth(table.length)
-        const rev = buildReverseTable(table)
+        const cdf = buildCDF(candidates)
         const key = exprKey(item.node)
-        const value = rev.get(key)
-        if (value !== undefined) {
-          out.write(value, bits)
-          hash = mixHash(hash, value)
-        }
-        else {
-          out.write(0, bits)
-          hash = mixHash(hash, 0)
-        }
+        const symbol = cdf.reverseMap.get(key) ?? 0
+        pairs.push({ cdf, symbol })
+        hash = mixHash(hash, symbol)
         // At max depth, children are cosmetic — don't recurse
         if (ctx.maxExprDepth === Infinity || item.depth < ctx.maxExprDepth) {
           pushExprChildren(item.node, item.depth)
@@ -447,29 +439,22 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
       case 'stmt': {
         ctx.prevStmtKey = item.prev
         const candidates = filterCandidates(ctx)
-        const table = buildTable(candidates, hash)
-        const bits = bitWidth(table.length)
-        const rev = buildReverseTable(table)
-        // ExpressionStatement: always use the inner expression's key
+        const cdf = buildCDF(candidates)
         const key = item.node.type === 'ExpressionStatement'
           ? exprKey((item.node as t.ExpressionStatement).expression)
           : stmtKey(item.node)
-        const value = rev.get(key)
-        if (value !== undefined) {
-          out.write(value, bits)
-          hash = mixHash(hash, value)
-        }
-        else {
-          out.write(0, bits)
-          hash = mixHash(hash, 0)
-        }
+        const symbol = cdf.reverseMap.get(key) ?? 0
+        pairs.push({ cdf, symbol })
+        hash = mixHash(hash, symbol)
         pushStmtChildren(item.node)
         break
       }
 
       case 'block': {
-        out.write(item.stmts.length, 8)
-        hash = mixHash(hash, item.stmts.length)
+        const blockCdf = buildBlockCDF()
+        const countSymbol = blockCdf.reverseMap.get(`block:${item.stmts.length}`) ?? 0
+        pairs.push({ cdf: blockCdf, symbol: countSymbol })
+        hash = mixHash(hash, countSymbol)
         ctx.blockDepth++
         work.push({ kind: 'block-depth-dec' })
         for (let i = item.stmts.length - 1; i >= 0; i--) {
@@ -521,24 +506,13 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         break
 
       case 'var-decl': {
-        // Process the init expression and infer type
         const exprCtx = { ...ctx, expressionOnly: true, exprDepth: item.depth }
         const candidates = filterCandidates(exprCtx)
-        const table = buildTable(candidates, hash)
-        const bits = bitWidth(table.length)
-        const rev = buildReverseTable(table)
+        const cdf = buildCDF(candidates)
         const key = exprKey(item.initNode)
-        const value = rev.get(key)
-        if (value !== undefined) {
-          out.write(value, bits)
-          hash = mixHash(hash, value)
-        }
-        else {
-          out.write(0, bits)
-          hash = mixHash(hash, 0)
-        }
-        // Defer typed scope push: children must see scope BEFORE this variable's type
-        // (matches encoder which builds children before updating typedScope)
+        const symbol = cdf.reverseMap.get(key) ?? 0
+        pairs.push({ cdf, symbol })
+        hash = mixHash(hash, symbol)
         const inferredType = inferTypeFromKey(key)
         work.push({ kind: 'var-type-push', name: item.name, type: inferredType })
         if (ctx.maxExprDepth === Infinity || item.depth < ctx.maxExprDepth) {
@@ -549,8 +523,32 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
     }
   }
 
-  // Convert recovered bits back to bytes
-  const bytes = out.toBytes()
+  // ─── Backward rANS pass: recover message bits ──────────────────────
+  let ransState = RANS_L
+  const recoveredBits: number[] = []
+
+  for (let i = pairs.length - 1; i >= 0; i--) {
+    const { cdf, symbol } = pairs[i]
+    ransState = ransEncode(ransState, symbol, cdf, recoveredBits)
+  }
+
+  // Extract remaining bits from the state
+  while (ransState > RANS_L) {
+    recoveredBits.push(ransState & 1)
+    ransState >>>= 1
+  }
+
+  // Reverse bits (LIFO → FIFO) and convert to bytes
+  recoveredBits.reverse()
+  const byteCount = Math.floor(recoveredBits.length / 8)
+  const bytes = new Uint8Array(byteCount)
+  for (let i = 0; i < byteCount; i++) {
+    let byte = 0
+    for (let b = 0; b < 8; b++)
+      byte = (byte << 1) | (recoveredBits[i * 8 + b] ?? 0)
+    bytes[i] = byte
+  }
+
   if (bytes.length < 4)
     return new Uint8Array(0)
   const payloadLength = ((bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3]) >>> 0
