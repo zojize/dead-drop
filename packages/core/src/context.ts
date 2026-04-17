@@ -120,35 +120,6 @@ const CONSTRUCTABLE_TYPES: ReadonlySet<ScopeType> = new Set(['function', 'class'
 // Note: IN_RHS_TYPES removed — 'in' operator is always filtered out since
 // both operands are data children and RHS can't be guaranteed to be an object.
 
-// ─── Bitstream I/O ─────────────────────────────────────────────────────────
-
-/** Compute how many bits to read/write for a given number of unique candidates. */
-export function bitWidth(uniqueCount: number): number {
-  if (uniqueCount <= 1)
-    return 0
-  return Math.floor(Math.log2(uniqueCount))
-}
-
-/** Writes variable-width values into a bit buffer. */
-export class BitWriter {
-  private bits: number[] = []
-
-  /** Write `width` least-significant bits of `value`. */
-  write(value: number, width: number): void {
-    for (let i = width - 1; i >= 0; i--)
-      this.bits.push((value >>> i) & 1)
-  }
-
-  /** Flush to a Uint8Array (zero-padded to byte boundary). */
-  toBytes(): Uint8Array {
-    const len = Math.ceil(this.bits.length / 8)
-    const out = new Uint8Array(len)
-    for (let i = 0; i < this.bits.length; i++)
-      out[i >>> 3] |= this.bits[i] << (7 - (i & 7))
-    return out
-  }
-}
-
 // ─── Running Structural Hash ────────────────────────────────────────────────
 
 /** Simple deterministic hash (FNV-1a inspired). Mix in a byte after each node. */
@@ -723,61 +694,3 @@ export function filterCandidates(ctx: EncodingContext): Candidate[] {
   })
 }
 
-/**
- * Build a bijective table from weighted candidates using hash as seed.
- * Size is 2^bitWidth(uniqueCount) — exactly matching the bits read/written.
- * Each slot maps to a UNIQUE candidate key. No duplicates, no padding.
- */
-export function buildTable(candidates: Candidate[], hash: number): Candidate[] {
-  if (candidates.length === 0)
-    throw new Error('No candidates for context')
-
-  // Deterministic PRNG
-  let s = hash | 0
-  function rng(): number {
-    s = s + 0x6D2B79F5 | 0
-    let z = Math.imul(s ^ s >>> 15, 1 | s)
-    z = z + Math.imul(z ^ z >>> 7, 61 | z) ^ z
-    return ((z ^ z >>> 14) >>> 0)
-  }
-
-  // Deduplicate candidates by key, keeping the highest weight per key
-  const byKey = new Map<string, Candidate>()
-  for (const c of candidates) {
-    const existing = byKey.get(c.key)
-    if (!existing || c.weight > existing.weight)
-      byKey.set(c.key, c)
-  }
-  const unique = [...byKey.values()]
-
-  // Table size = 2^floor(log2(uniqueCount)), guaranteed <= unique.length
-  const bits = bitWidth(unique.length)
-  const size = 1 << bits
-
-  // Weight-biased selection: sort by (weight * random), take first `size`
-  const scored = unique.map(c => ({ c, score: c.weight * (rng() % 1000 + 1) }))
-  scored.sort((a, b) => b.score - a.score)
-
-  const table: Candidate[] = scored.slice(0, size).map(s => s.c)
-
-  // Fisher-Yates shuffle to distribute entries across the index range
-  for (let i = table.length - 1; i > 0; i--) {
-    const j = rng() % (i + 1)
-    const tmp = table[i]
-    table[i] = table[j]
-    table[j] = tmp
-  }
-
-  return table
-}
-
-/** Build a reverse lookup: candidate key → index value. */
-export function buildReverseTable(table: Candidate[]): Map<string, number> {
-  const rev = new Map<string, number>()
-  for (let i = 0; i < table.length; i++) {
-    const key = table[i].key
-    if (!rev.has(key))
-      rev.set(key, i)
-  }
-  return rev
-}
