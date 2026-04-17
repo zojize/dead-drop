@@ -115,12 +115,14 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
   function cosmeticFuncName(): string {
     return CORPUS_FUNC_NAMES[rng() % CORPUS_FUNC_NAMES.length]
   }
-  function cosmeticPackageName(h: number): string {
+  function cosmeticPackageName(): string {
     if (PACKAGE_NAMES.length === 0)
       return 'pkg'
-    return PACKAGE_NAMES[h % PACKAGE_NAMES.length]
+    return PACKAGE_NAMES[rng() % PACKAGE_NAMES.length]
   }
   function cosmeticImportedName(h: number, offset: number): string {
+    // Uses hash so imports are deterministic from structural position
+    // (same structural spot → same name, allowing consistent references)
     if (IMPORTED_NAMES.length === 0)
       return nameFromHash(h, offset)
     const mixed = mixHash(h, offset)
@@ -382,7 +384,7 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
       case 'BreakStatement': return t.breakStatement()
       case 'ContinueStatement': return t.continueStatement()
       case 'ImportDeclaration': {
-        const pkg = cosmeticPackageName(hash)
+        const pkg = cosmeticPackageName()
         if (c.variant === 0) {
           // side-effect
           return t.importDeclaration([], t.stringLiteral(pkg))
@@ -432,7 +434,9 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         // variants 10..13: function with param count 0..3
         if (c.variant >= 10 && c.variant <= 13) {
           const paramCount = c.variant - 10
-          const fnName = cosmeticFuncName()
+          let fnName = cosmeticFuncName()
+          while (ctx.scope.includes(fnName))
+            fnName = `${fnName}${ctx.scope.length}`
           const paramNames = Array.from({ length: paramCount }, (_, i) => nameFromHash(hash, 900 + i))
           // Enter function scope
           const savedScope = [...ctx.scope]
