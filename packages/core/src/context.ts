@@ -4,6 +4,7 @@
  *
  * Both encoder and decoder maintain identical context state.
  */
+import corpusTransitions from './corpus-transitions.json'
 import corpusWeights from './corpus-weights.json'
 
 // ─── Candidate Entry ────────────────────────────────────────────────────────
@@ -64,6 +65,7 @@ export interface EncodingContext {
   maxExprDepth: number
   blockDepth: number
   scopeBucket: ScopeBucket
+  prevStmtKey: string
 }
 
 export function initialContext(): EncodingContext {
@@ -78,6 +80,7 @@ export function initialContext(): EncodingContext {
     maxExprDepth: MAX_EXPR_DEPTH,
     blockDepth: 0,
     scopeBucket: 'top-level',
+    prevStmtKey: '<START>',
   }
 }
 
@@ -189,12 +192,32 @@ interface BucketedWeights {
 
 const W = corpusWeights as BucketedWeights
 
+type TransitionTable = Record<string, Record<string, Record<string, number>>>
+const T = corpusTransitions as TransitionTable
+
 /**
  * Corpus-derived weight for a candidate key in a given bucket.
  * Falls through: bucket-specific → global → 0.01 default.
  */
 function lookupWeight(key: string, bucket: ScopeBucket = 'top-level'): number {
   return W[bucket]?.[key] ?? W.global[key] ?? 0.01
+}
+
+/** Map a candidate key to its coarsened bigram key for transition lookup. */
+export function bigramKey(candidateKey: string, isStatement: boolean): string {
+  return isStatement ? candidateKey : 'ExpressionStatement:0'
+}
+
+/**
+ * Look up the bigram transition weight for (prev → candidateKey) in a bucket.
+ * Returns the weight if found, or null to signal unigram fallback.
+ */
+export function lookupTransitionWeight(
+  prev: string,
+  candidateKey: string,
+  bucket: ScopeBucket,
+): number | null {
+  return T[bucket]?.[prev]?.[candidateKey] ?? null
 }
 
 /** Build the full candidate pool (all possible entries across all contexts). */
@@ -509,6 +532,15 @@ export function filterCandidates(ctx: EncodingContext): Candidate[] {
     // Dynamic weight: Identifier gets heavier with more scope entries
     if (c.nodeType === 'Identifier' && ctx.typedScope.length > 0) {
       w += ctx.typedScope.length * 0.5
+    }
+
+    // Bigram transition weight: replace unigram with transition weight if available
+    if (ctx.prevStmtKey && !ctx.expressionOnly) {
+      const bk = bigramKey(c.key, c.isStatement)
+      const tw = lookupTransitionWeight(ctx.prevStmtKey, bk, ctx.scopeBucket)
+      if (tw !== null) {
+        w = tw
+      }
     }
 
     // Depth-based weight scaling for expressions
