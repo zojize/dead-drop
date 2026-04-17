@@ -277,18 +277,18 @@ function buildAllCandidates(): Candidate[] {
   // Conditional (weight 0.8, 3 children)
   c.push({ key: 'ConditionalExpression:0', nodeType: 'ConditionalExpression', variant: 0, children: ['expr', 'expr', 'expr'], weight: lookupWeight('ConditionalExpression:0'), isStatement: false })
 
-  // Call/New expression — arg count as variant (type-gated: only when scope has callable/constructable)
-  for (let n = 0; n < 19; n++) {
+  // Call/New expression — arg count 0-4 (covers most real-world calls)
+  for (let n = 0; n <= 4; n++) {
     const ch: SlotKind[] = ['expr', ...Array.from<SlotKind>({ length: n }).fill('expr')]
     c.push({ key: `CallExpression:${n}`, nodeType: 'CallExpression', variant: n, children: ch, weight: lookupWeight(`CallExpression:${n}`), isStatement: false })
   }
-  for (let n = 0; n < 16; n++) {
+  for (let n = 0; n <= 3; n++) {
     const ch: SlotKind[] = ['expr', ...Array.from<SlotKind>({ length: n }).fill('expr')]
     c.push({ key: `NewExpression:${n}`, nodeType: 'NewExpression', variant: n, children: ch, weight: lookupWeight(`NewExpression:${n}`), isStatement: false })
   }
 
-  // OptionalCallExpression — type-gated: expr?.(args) throws if expr is non-null non-callable
-  for (let n = 0; n < 19; n++) {
+  // OptionalCallExpression — arg count 0-3
+  for (let n = 0; n <= 3; n++) {
     const ch: SlotKind[] = ['expr', ...Array.from<SlotKind>({ length: n }).fill('expr')]
     c.push({ key: `OptionalCallExpression:${n}`, nodeType: 'OptionalCallExpression', variant: n, children: ch, weight: lookupWeight(`OptionalCallExpression:${n}`), isStatement: false })
   }
@@ -300,11 +300,11 @@ function buildAllCandidates(): Candidate[] {
   c.push({ key: 'OptionalMemberExpression:0', nodeType: 'OptionalMemberExpression', variant: 0, children: ['expr'], weight: lookupWeight('OptionalMemberExpression:0'), isStatement: false })
   c.push({ key: 'OptionalMemberExpression:1', nodeType: 'OptionalMemberExpression', variant: 1, children: ['expr', 'expr'], weight: lookupWeight('OptionalMemberExpression:1'), isStatement: false })
 
-  // Array/Object — element/prop count (extended to 0-31 for more unique candidates)
-  for (let n = 0; n < 32; n++) {
+  // Array/Object — element/prop count 0-4 (covers most real-world literals)
+  for (let n = 0; n <= 4; n++) {
     c.push({ key: `ArrayExpression:${n}`, nodeType: 'ArrayExpression', variant: n, children: Array.from<SlotKind>({ length: n }).fill('expr'), weight: lookupWeight(`ArrayExpression:${n}`), isStatement: false })
   }
-  for (let n = 0; n < 32; n++) {
+  for (let n = 0; n <= 4; n++) {
     const ch: SlotKind[] = []
     for (let j = 0; j < n; j++) {
       ch.push('expr', 'expr')
@@ -312,25 +312,25 @@ function buildAllCandidates(): Candidate[] {
     c.push({ key: `ObjectExpression:${n}`, nodeType: 'ObjectExpression', variant: n, children: ch, weight: lookupWeight(`ObjectExpression:${n}`), isStatement: false })
   }
 
-  // Sequence expression (count 2-29, extended range)
-  for (let n = 2; n <= 29; n++) {
+  // Sequence expression — count 2-4 (rare in real code, small variants only)
+  for (let n = 2; n <= 4; n++) {
     c.push({ key: `SequenceExpression:${n - 2}`, nodeType: 'SequenceExpression', variant: n - 2, children: Array.from<SlotKind>({ length: n }).fill('expr'), weight: lookupWeight(`SequenceExpression:${n - 2}`), isStatement: false })
   }
 
-  // Template literals (extended to 0-16)
-  for (let n = 0; n < 17; n++) {
+  // Template literals — 0-3 interpolations
+  for (let n = 0; n <= 3; n++) {
     c.push({ key: `TemplateLiteral:${n}`, nodeType: 'TemplateLiteral', variant: n, children: Array.from<SlotKind>({ length: n }).fill('expr'), weight: lookupWeight(`TemplateLiteral:${n}`), isStatement: false })
   }
-  // TaggedTemplateExpression (type-gated: tag must be callable)
-  for (let n = 0; n < 8; n++) {
+  // TaggedTemplateExpression — 0-2 interpolations
+  for (let n = 0; n <= 2; n++) {
     c.push({ key: `TaggedTemplateExpression:${n}`, nodeType: 'TaggedTemplateExpression', variant: n, children: ['expr', ...Array.from<SlotKind>({ length: n }).fill('expr')], weight: lookupWeight(`TaggedTemplateExpression:${n}`), isStatement: false })
   }
 
-  // Arrow/Function expression — param count (extended to 0-23)
-  for (let n = 0; n < 24; n++) {
+  // Arrow/Function expression — param count 0-3 (covers most functions)
+  for (let n = 0; n <= 3; n++) {
     c.push({ key: `ArrowFunctionExpression:${n}`, nodeType: 'ArrowFunctionExpression', variant: n, children: ['expr'], weight: lookupWeight(`ArrowFunctionExpression:${n}`), isStatement: false })
   }
-  for (let n = 0; n < 24; n++) {
+  for (let n = 0; n <= 3; n++) {
     c.push({ key: `FunctionExpression:${n}`, nodeType: 'FunctionExpression', variant: n, children: ['expr'], weight: lookupWeight(`FunctionExpression:${n}`), isStatement: false })
   }
 
