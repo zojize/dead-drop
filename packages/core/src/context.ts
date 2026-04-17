@@ -539,12 +539,22 @@ export function filterCandidates(ctx: EncodingContext): Candidate[] {
       w += ctx.typedScope.length * 0.5
     }
 
-    // Bigram transition weight: replace unigram with transition weight if available
+    // Bigram transition weight: adjust weight based on previous statement
     if (ctx.prevStmtKey && !ctx.expressionOnly) {
       const bk = bigramKey(c.key, c.isStatement)
       const tw = lookupTransitionWeight(ctx.prevStmtKey, bk, ctx.scopeBucket)
       if (tw !== null) {
-        w = tw
+        if (c.isStatement) {
+          // Statement candidates: direct replacement
+          w = tw
+        }
+        else {
+          // Expression candidates: scale proportionally. The transition weight
+          // for 'ExpressionStatement:0' represents P(any expression), not
+          // P(this specific expression). Scale by ratio to preserve internal distribution.
+          const unigramExpr = lookupWeight('ExpressionStatement:0', ctx.scopeBucket)
+          w *= tw / unigramExpr
+        }
       }
     }
 

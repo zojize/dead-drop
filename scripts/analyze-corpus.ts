@@ -464,7 +464,8 @@ function toTransitionWeights(
   const out: Record<string, Record<string, number>> = {}
   for (const [prev, nextMap] of bucketMap) {
     const sorted = [...nextMap.entries()].sort((a, b) => b[1] - a[1])
-    if (sorted.length === 0) continue
+    if (sorted.length === 0)
+      continue
     const maxCount = sorted[0][1]
     const row: Record<string, number> = {}
     for (const [next, count] of sorted) {
