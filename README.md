@@ -85,6 +85,15 @@ A top-level slot is likely to become an import or declaration; a function-body
 slot is likely to become a return or if-statement; a loop-body slot favors
 flow-control statements. Output shapes mirror real JavaScript module structure.
 
+### Markov chain ordering
+
+Statement selection uses **bigram transition weights** — P(next statement |
+previous statement, bucket) — scraped from the same corpus. This means
+imports cluster at the top of the file (as in real modules), declarations
+follow imports, and control flow appears after setup. All expression-as-statement
+candidates are coarsened to a single `ExpressionStatement` key for transition
+lookup, keeping the transition matrix compact (~30 prev keys per bucket).
+
 After a `VariableDeclaration`, the declared name is added to scope and
 becomes available for future Identifier references and assignment LHS.
 
@@ -189,7 +198,7 @@ return bytes[4 .. 4+length]
 bun install
 bun run lint          # lint (uses @antfu/eslint-config)
 bun run lint:fix      # auto-fix lint issues
-bun run test          # 60 tests including fuzz and randomization invariant
+bun run test          # 66 tests including fuzz, ordering quality, and randomization invariant
 bun run typecheck     # typecheck all packages
 bun run knip          # check for unused deps/exports
 ```
