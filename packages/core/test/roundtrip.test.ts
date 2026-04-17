@@ -281,6 +281,7 @@ describe('data lives in AST structure, not literal values', () => {
 
       // Parse → randomize → regenerate
       const ast = parse(js, {
+        sourceType: 'module',
         allowReturnOutsideFunction: true,
         errorRecovery: true,
         plugins: [['optionalChainingAssign', { version: '2023-07' }]],
@@ -410,6 +411,30 @@ describe('maxExprDepth', () => {
     // Lower bounds — corpus weights drive appearance. If these fail, corpus
     // weights may have drifted or the bucket transitions aren't firing.
     expect(hasImport + hasExport).toBeGreaterThan(N * 0.02)
+  })
+
+  it('imports cluster near the top of output across many seeds', () => {
+    let importsInFirstHalf = 0
+    let importsTotal = 0
+    const N = 100
+    for (let seed = 0; seed < N; seed++) {
+      const msg = new Uint8Array(Array.from({ length: 20 }, (_, i) => (seed * 13 + i * 7) & 0xFF))
+      const codec = createCodec({ seed })
+      const js = codec.encode(msg)
+      const lines = js.split(';')
+      const totalLines = lines.length
+      for (let i = 0; i < totalLines; i++) {
+        if (/\bimport\s/.test(lines[i])) {
+          importsTotal++
+          if (i < totalLines / 2)
+            importsInFirstHalf++
+        }
+      }
+      const back = codec.decode(js)
+      expect(Array.from(back)).toEqual(Array.from(msg))
+    }
+    if (importsTotal > 10)
+      expect(importsInFirstHalf / importsTotal).toBeGreaterThan(0.5)
   })
 
   it('lorem roundtrips with depth 64', () => {
