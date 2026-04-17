@@ -132,6 +132,23 @@ const counts: Record<ScopeBucket, Map<string, number>> = {
 }
 const globalCounts = new Map<string, number>()
 
+// Bigram transition counts: bucket → prev → next → count
+const transitions: Record<ScopeBucket, Map<string, Map<string, number>>> = {
+  'top-level': new Map(),
+  'function-body': new Map(),
+  'loop-body': new Map(),
+  'block-body': new Map(),
+}
+
+function addTransition(bucket: ScopeBucket, prev: string, next: string): void {
+  let prevMap = transitions[bucket].get(prev)
+  if (!prevMap) {
+    prevMap = new Map()
+    transitions[bucket].set(prev, prevMap)
+  }
+  prevMap.set(next, (prevMap.get(next) ?? 0) + 1)
+}
+
 function exprKey(node: t.Node): string | null {
   switch (node.type) {
     case 'NumericLiteral': return 'NumericLiteral:0'
@@ -272,7 +289,15 @@ function walk(node: any, bucket: ScopeBucket, isDirectStatement: boolean): void 
   // and descend into its body preserving the current bucket.
   if (node.type === 'BlockStatement' && isDirectStatement && (bucket === 'function-body' || bucket === 'loop-body')) {
     globalCounts.set('BlockStatement:0', (globalCounts.get('BlockStatement:0') ?? 0) + 1)
+    let prev = '<START>'
     for (const stmt of node.body ?? []) {
+      const sk2 = stmtKey(stmt)
+      const key2 = sk2 ?? exprKey(stmt)
+      const bigramNext = sk2 ?? 'ExpressionStatement:0'
+      if (key2) {
+        addTransition(bucket, prev, bigramNext)
+        prev = bigramNext
+      }
       walk(stmt, bucket, true)
     }
     return
@@ -305,9 +330,26 @@ function walk(node: any, bucket: ScopeBucket, isDirectStatement: boolean): void 
       : bucket
 
     if (Array.isArray(val)) {
-      for (const item of val) {
-        if (item && typeof item === 'object' && item.type)
-          walk(item, childBucket, slotIsStatement)
+      if (slotIsStatement) {
+        let prev = '<START>'
+        for (const item of val) {
+          if (item && typeof item === 'object' && item.type) {
+            const sk2 = stmtKey(item)
+            const key2 = sk2 ?? exprKey(item)
+            const bigramNext = sk2 ?? 'ExpressionStatement:0'
+            if (key2) {
+              addTransition(childBucket, prev, bigramNext)
+              prev = bigramNext
+            }
+            walk(item, childBucket, slotIsStatement)
+          }
+        }
+      }
+      else {
+        for (const item of val) {
+          if (item && typeof item === 'object' && item.type)
+            walk(item, childBucket, slotIsStatement)
+        }
       }
     }
     else if (val && typeof val === 'object' && val.type) {
@@ -415,6 +457,39 @@ const outPath = join(process.cwd(), 'packages/core/src/corpus-weights.json')
 writeFileSync(outPath, `${JSON.stringify(nested, null, 2)}\n`)
 console.log(`\nWeights written to ${outPath}`)
 console.log(`Sizes — top-level: ${Object.keys(nested['top-level']).length}, function-body: ${Object.keys(nested['function-body']).length}, loop-body: ${Object.keys(nested['loop-body']).length}, block-body: ${Object.keys(nested['block-body']).length}, global: ${Object.keys(nested.global).length}`)
+
+function toTransitionWeights(
+  bucketMap: Map<string, Map<string, number>>,
+): Record<string, Record<string, number>> {
+  const out: Record<string, Record<string, number>> = {}
+  for (const [prev, nextMap] of bucketMap) {
+    const sorted = [...nextMap.entries()].sort((a, b) => b[1] - a[1])
+    if (sorted.length === 0) continue
+    const maxCount = sorted[0][1]
+    const row: Record<string, number> = {}
+    for (const [next, count] of sorted) {
+      row[next] = Math.max(0.01, Math.round((count / maxCount) * 1000) / 100)
+    }
+    out[prev] = row
+  }
+  return out
+}
+
+const transitionNested = {
+  'top-level': toTransitionWeights(transitions['top-level']),
+  'function-body': toTransitionWeights(transitions['function-body']),
+  'loop-body': toTransitionWeights(transitions['loop-body']),
+  'block-body': toTransitionWeights(transitions['block-body']),
+}
+
+const transOutPath = join(process.cwd(), 'packages/core/src/corpus-transitions.json')
+writeFileSync(transOutPath, `${JSON.stringify(transitionNested, null, 2)}\n`)
+console.log(`\nTransitions written to ${transOutPath}`)
+for (const b of ['top-level', 'function-body', 'loop-body', 'block-body'] as const) {
+  const prevKeys = Object.keys(transitionNested[b]).length
+  const totalPairs = Object.values(transitionNested[b]).reduce((s, row) => s + Object.keys(row).length, 0)
+  console.log(`  ${b}: ${prevKeys} prev keys, ${totalPairs} total transitions`)
+}
 
 // Cleanup
 execSync(`rm -rf "${tmpDir}"`)
