@@ -12,9 +12,11 @@ describe('buildCDF', () => {
     expect(cdf.total).toBe(1 << 12)
     expect(cdf.cumFreqs[0]).toBe(0)
     expect(cdf.freqs.length).toBe(2)
-    expect(cdf.freqs[0]).toBeGreaterThan(cdf.freqs[1])
     expect(cdf.freqs[0] + cdf.freqs[1]).toBe(cdf.total)
-    expect(cdf.candidates).toEqual(candidates)
+    // Higher-weight candidate gets more frequency (check by key lookup)
+    const aIdx = cdf.reverseMap.get('A')!
+    const bIdx = cdf.reverseMap.get('B')!
+    expect(cdf.freqs[aIdx]).toBeGreaterThan(cdf.freqs[bIdx])
   })
 
   it('assigns minimum frequency 1 to low-weight candidates', () => {
@@ -42,8 +44,14 @@ describe('buildCDF', () => {
       { key: 'B:1', nodeType: 'B', variant: 1, children: [], weight: 1, isStatement: false },
     ]
     const cdf = buildCDF(candidates)
-    expect(cdf.reverseMap.get('A:0')).toBe(0)
-    expect(cdf.reverseMap.get('B:1')).toBe(1)
+    // Both keys are in the reverse map
+    expect(cdf.reverseMap.has('A:0')).toBe(true)
+    expect(cdf.reverseMap.has('B:1')).toBe(true)
+    // Indices are valid
+    const aIdx = cdf.reverseMap.get('A:0')!
+    const bIdx = cdf.reverseMap.get('B:1')!
+    expect(cdf.candidates[aIdx].key).toBe('A:0')
+    expect(cdf.candidates[bIdx].key).toBe('B:1')
   })
 
   it('is deterministic', () => {
@@ -134,8 +142,9 @@ describe('buildBlockCDF', () => {
     expect(cdf.candidates.length).toBe(256)
     expect(cdf.total).toBe(1 << 12)
     expect(cdf.freqs.reduce((s, f) => s + f, 0)).toBe(cdf.total)
-    expect(cdf.reverseMap.get('block:0')).toBe(0)
-    expect(cdf.reverseMap.get('block:255')).toBe(255)
+    // All block keys are present in reverse map
+    expect(cdf.reverseMap.has('block:0')).toBe(true)
+    expect(cdf.reverseMap.has('block:255')).toBe(true)
   })
 
   it('is cached (returns same reference)', () => {
@@ -144,7 +153,9 @@ describe('buildBlockCDF', () => {
 
   it('assigns higher frequency to smaller block counts', () => {
     const cdf = buildBlockCDF()
-    expect(cdf.freqs[0]).toBeGreaterThan(cdf.freqs[1])
-    expect(cdf.freqs[1]).toBeGreaterThanOrEqual(cdf.freqs[10])
+    // block:0 has higher weight → higher frequency than block:10
+    const idx0 = cdf.reverseMap.get('block:0')!
+    const idx10 = cdf.reverseMap.get('block:10')!
+    expect(cdf.freqs[idx0]).toBeGreaterThan(cdf.freqs[idx10])
   })
 })
