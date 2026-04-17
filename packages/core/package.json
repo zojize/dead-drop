@@ -1,7 +1,7 @@
 {
   "name": "@zojize/dead-drop",
   "type": "module",
-  "version": "6.0.0",
+  "version": "6.1.0",
   "description": "Steganographic message encoding via JavaScript ASTs",
   "author": "Jeff Zou",
   "license": "MIT",
