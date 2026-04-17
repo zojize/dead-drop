@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.1.1](https://github.com/zojize/dead-drop/compare/v6.1.0...v6.1.1) (2026-04-17)
+
+
+### Bug Fixes
+
+* **test:** increase timeout for import/export appearance test ([5675768](https://github.com/zojize/dead-drop/commit/567576885b8a4797f0934f0b89c899567e16bc51))
+
 ## [6.1.0](https://github.com/zojize/dead-drop/compare/v6.0.0...v6.1.0) (2026-04-17)
 
 
