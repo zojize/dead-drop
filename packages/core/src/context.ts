@@ -225,6 +225,127 @@ export function lookupTransitionWeight(
   return T[bucket]?.[prev]?.[candidateKey] ?? null
 }
 
+// ─── CDF for rANS ────────────────────────────────────────────────────────────
+
+const CDF_BITS = 12
+const CDF_TOTAL = 1 << CDF_BITS
+
+export interface CDF {
+  cumFreqs: number[]
+  freqs: number[]
+  total: number
+  candidates: Candidate[]
+  reverseMap: Map<string, number>
+}
+
+export function buildCDF(candidates: Candidate[]): CDF {
+  if (candidates.length === 0)
+    throw new Error('No candidates for CDF')
+
+  const n = candidates.length
+  const totalWeight = candidates.reduce((s, c) => s + c.weight, 0)
+
+  // Initial allocation: proportional to weight, minimum 1
+  const freqs = Array.from<number>({ length: n })
+  let allocated = 0
+  for (let i = 0; i < n; i++) {
+    freqs[i] = Math.max(1, Math.round((candidates[i].weight / totalWeight) * CDF_TOTAL))
+    allocated += freqs[i]
+  }
+
+  // Adjust to hit exactly CDF_TOTAL: add/remove from the largest entry
+  let largestIdx = 0
+  for (let i = 1; i < n; i++) {
+    if (freqs[i] > freqs[largestIdx])
+      largestIdx = i
+  }
+  freqs[largestIdx] += CDF_TOTAL - allocated
+
+  // Safety: if adjustment pushed largest below 1, redistribute
+  if (freqs[largestIdx] < 1) {
+    for (let i = 0; i < n; i++)
+      freqs[i] = 1
+    freqs[0] += CDF_TOTAL - n
+  }
+
+  // Build cumulative frequencies
+  const cumFreqs = Array.from<number>({ length: n })
+  cumFreqs[0] = 0
+  for (let i = 1; i < n; i++)
+    cumFreqs[i] = cumFreqs[i - 1] + freqs[i - 1]
+
+  // Reverse map: candidate key → index
+  const reverseMap = new Map<string, number>()
+  for (let i = 0; i < n; i++)
+    reverseMap.set(candidates[i].key, i)
+
+  return { cumFreqs, freqs, total: CDF_TOTAL, candidates, reverseMap }
+}
+
+export const RANS_L = 1 << 16
+
+export function ransEncode(x: number, symbol: number, cdf: CDF, outBits: number[]): number {
+  const freq = cdf.freqs[symbol]
+  const cumFreq = cdf.cumFreqs[symbol]
+  const M = cdf.total
+
+  // Renormalize: output bits while state would overflow after encoding
+  while (x >= freq * (RANS_L << 1)) {
+    outBits.push(x & 1)
+    x >>>= 1
+  }
+
+  // Core rANS encode: x' = (x / freq) * M + cumFreq + (x % freq)
+  return Math.floor(x / freq) * M + cumFreq + (x % freq)
+}
+
+export function ransDecode(x: number, cdf: CDF, inBits: number[]): { newState: number, symbol: number } {
+  const M = cdf.total
+
+  // Extract symbol from state
+  const t = x % M
+  let symbol = cdf.cumFreqs.length - 1
+  for (let i = 1; i < cdf.cumFreqs.length; i++) {
+    if (cdf.cumFreqs[i] > t) {
+      symbol = i - 1
+      break
+    }
+  }
+
+  const freq = cdf.freqs[symbol]
+  const cumFreq = cdf.cumFreqs[symbol]
+
+  // Core rANS decode: x' = (x / M) * freq + (x % M) - cumFreq
+  x = Math.floor(x / M) * freq + t - cumFreq
+
+  // Renormalize: read bits while state is too small
+  while (x < RANS_L && inBits.length > 0)
+    x = (x << 1) | inBits.pop()!
+
+  return { newState: x, symbol }
+}
+
+let _blockCDF: CDF | null = null
+export function buildBlockCDF(): CDF {
+  if (_blockCDF)
+    return _blockCDF
+  const candidates: Candidate[] = []
+  for (let k = 0; k <= 255; k++) {
+    candidates.push({
+      key: `block:${k}`,
+      nodeType: 'BlockCount',
+      variant: k,
+      children: [],
+      weight: 0.6 ** k,
+      isStatement: false,
+    })
+  }
+  _blockCDF = buildCDF(candidates)
+  return _blockCDF
+}
+
+// ─── Candidate Pool ──────────────────────────────────────────────────────────
+
 /** Build the full candidate pool (all possible entries across all contexts). */
 function buildAllCandidates(): Candidate[] {
   const c: Candidate[] = []
