@@ -1,7 +1,7 @@
 import type * as t from '@babel/types'
 import type { EncodingContext, ScopeBucket } from './context'
 import { parse } from '@babel/parser'
-import { ASSIGN_OPS, BINARY_OPS, bitWidth, BitWriter, buildReverseTable, buildTable, deriveScopeBucket, filterCandidates, inferTypeFromKey, initialContext, LOGICAL_OPS, MAX_EXPR_DEPTH, mixHash, nameFromHash, UNARY_OPS } from './context'
+import { ASSIGN_OPS, bigramKey, BINARY_OPS, bitWidth, BitWriter, buildReverseTable, buildTable, deriveScopeBucket, filterCandidates, inferTypeFromKey, initialContext, LOGICAL_OPS, MAX_EXPR_DEPTH, mixHash, nameFromHash, UNARY_OPS } from './context'
 
 export interface DecodeOptions {
   /** Structural key — must match the key used during encoding. */
@@ -11,7 +11,7 @@ export interface DecodeOptions {
 
 type WorkItem
   = | { kind: 'expr', node: t.Node, depth: number }
-    | { kind: 'stmt', node: t.Node }
+    | { kind: 'stmt', node: t.Node, prev: string }
     | { kind: 'block', stmts: readonly t.Statement[] }
     | { kind: 'block-depth-dec' }
     | { kind: 'scope-save', scope: string[], typedScope: any[], inFunction: boolean }
@@ -129,6 +129,12 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
     }
   }
 
+  /** Coarsen a parsed node's key for bigram lookup. */
+  function stmtKeyForBigram(node: t.Node): string {
+    const isStatement = node.type !== 'ExpressionStatement' && node.type !== 'Directive'
+    return bigramKey(stmtKey(node), isStatement)
+  }
+
   // ─── Push expression children (LIFO order for iterative processing) ─
 
   function pushExprChildren(node: t.Node, depth: number): void {
@@ -136,14 +142,14 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
     switch (node.type) {
       case 'BinaryExpression':
       case 'LogicalExpression':
-        work.push({ kind: 'expr', node: (node as any).right, depth: d })
-        work.push({ kind: 'expr', node: (node as any).left, depth: d })
+        work.push({ kind: 'expr', node: node.right, depth: d })
+        work.push({ kind: 'expr', node: node.left, depth: d })
         break
       case 'AssignmentExpression':
-        work.push({ kind: 'expr', node: (node as t.AssignmentExpression).right, depth: d })
+        work.push({ kind: 'expr', node: node.right, depth: d })
         break
       case 'UnaryExpression':
-        work.push({ kind: 'expr', node: (node as any).argument, depth: d })
+        work.push({ kind: 'expr', node: node.argument, depth: d })
         break
       case 'ConditionalExpression': {
         const n = node as t.ConditionalExpression
@@ -400,15 +406,16 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
 
   // ─── Main iterative loop ───────────────────────────────────────────
 
-  // Seed with top-level statements (reverse for LIFO).
-  // Also handle directives: Babel treats leading string-literal statements as Directive nodes
-  // (stored in ast.program.directives rather than ast.program.body). The encoder emitted them
-  // as ExpressionStatement(StringLiteral), so we must decode them the same way.
-  // Directives come before body in source order; push body first (processed last) then directives.
-  for (let i = ast.program.body.length - 1; i >= 0; i--)
-    work.push({ kind: 'stmt', node: ast.program.body[i] })
-  for (let i = (ast.program.directives?.length ?? 0) - 1; i >= 0; i--)
-    work.push({ kind: 'stmt', node: ast.program.directives![i] })
+  // Combine directives + body in source order for prev computation
+  const topStmts: t.Node[] = [
+    ...(ast.program.directives ?? []),
+    ...ast.program.body,
+  ]
+  // Push in reverse (LIFO) with prev computed from predecessor
+  for (let i = topStmts.length - 1; i >= 0; i--) {
+    const prev = i === 0 ? '<START>' : stmtKeyForBigram(topStmts[i - 1])
+    work.push({ kind: 'stmt', node: topStmts[i], prev })
+  }
 
   while (work.length > 0) {
     const item = work.pop()!
@@ -438,6 +445,7 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
       }
 
       case 'stmt': {
+        ctx.prevStmtKey = item.prev
         const candidates = filterCandidates(ctx)
         const table = buildTable(candidates, hash)
         const bits = bitWidth(table.length)
@@ -464,8 +472,10 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         hash = mixHash(hash, item.stmts.length)
         ctx.blockDepth++
         work.push({ kind: 'block-depth-dec' })
-        for (let i = item.stmts.length - 1; i >= 0; i--)
-          work.push({ kind: 'stmt', node: item.stmts[i] })
+        for (let i = item.stmts.length - 1; i >= 0; i--) {
+          const prev = i === 0 ? '<START>' : stmtKeyForBigram(item.stmts[i - 1])
+          work.push({ kind: 'stmt', node: item.stmts[i], prev })
+        }
         break
       }
 
