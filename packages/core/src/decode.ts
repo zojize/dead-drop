@@ -260,12 +260,15 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         // Directive is a leaf — no children to push (treated as StringLiteral:0, a leaf expression)
         break
       case 'ExpressionStatement':
-        // Expression was directly selected as a candidate in statement context
-        pushExprChildren((node as t.ExpressionStatement).expression, 0)
+        // ExpressionStatement:0 was selected from statement table; the inner
+        // expression is processed via the expression table (separate lookup)
+        work.push({ kind: 'expr', node: (node as t.ExpressionStatement).expression, depth: 0 })
         break
       case 'VariableDeclaration': {
         const n = node as t.VariableDeclaration
-        const name = nameFromHash(hash, ctx.scope.length)
+        let name = nameFromHash(hash, ctx.scope.length)
+        while (ctx.scope.includes(name))
+          name = `${name}${ctx.scope.length}`
         ctx.scope.push(name)
         work.push({ kind: 'var-decl', name, initNode: n.declarations[0].init!, depth: 0 })
         break
@@ -373,6 +376,7 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         break
       }
       case 'ExportDefaultDeclaration': {
+        ctx.hasExportDefault = true
         const n = node as t.ExportDefaultDeclaration
         work.push({ kind: 'expr', node: n.declaration as t.Node, depth: 0 })
         break
@@ -450,9 +454,10 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         const table = buildTable(candidates, hash)
         const bits = bitWidth(table.length)
         const rev = buildReverseTable(table)
-        // ExpressionStatement: always use the inner expression's key
+        // ExpressionStatement: use 'ExpressionStatement:0' for statement table lookup,
+        // then process the inner expression separately via the expression table
         const key = item.node.type === 'ExpressionStatement'
-          ? exprKey((item.node as t.ExpressionStatement).expression)
+          ? 'ExpressionStatement:0'
           : stmtKey(item.node)
         const value = rev.get(key)
         if (value !== undefined) {

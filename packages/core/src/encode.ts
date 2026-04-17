@@ -315,7 +315,9 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
     switch (c.nodeType) {
       case 'VariableDeclaration': {
         const kind = VAR_KINDS[c.variant]
-        const name = nameFromHash(hash, ctx.scope.length)
+        let name = nameFromHash(hash, ctx.scope.length)
+        while (ctx.scope.includes(name))
+          name = `${name}${ctx.scope.length}`
         ctx.scope.push(name)
         const { node: init, candidate: initC } = buildExpr(0)
         const inferredType = initC ? inferTypeFromKey(initC.key) : 'any'
@@ -387,7 +389,9 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         }
         if (c.variant === 1) {
           // default
-          const local = cosmeticImportedName(hash, 1)
+          let local = cosmeticImportedName(hash, 1)
+          while (ctx.scope.includes(local))
+            local = `${local}${ctx.scope.length}`
           ctx.scope.push(local)
           ctx.typedScope.push({ name: local, type: 'any' })
           return t.importDeclaration(
@@ -399,7 +403,9 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         const count = c.variant - 1
         const specifiers: t.ImportSpecifier[] = []
         for (let i = 0; i < count; i++) {
-          const local = cosmeticImportedName(hash, 10 + i)
+          let local = cosmeticImportedName(hash, 10 + i)
+          while (ctx.scope.includes(local))
+            local = `${local}${ctx.scope.length}`
           ctx.scope.push(local)
           ctx.typedScope.push({ name: local, type: 'any' })
           specifiers.push(t.importSpecifier(t.identifier(local), t.identifier(local)))
@@ -407,6 +413,7 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         return t.importDeclaration(specifiers, t.stringLiteral(pkg))
       }
       case 'ExportDefaultDeclaration': {
+        ctx.hasExportDefault = true
         const { node: inner } = buildExpr(0)
         return t.exportDefaultDeclaration(inner)
       }
@@ -452,7 +459,9 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         }
         return t.emptyStatement()
       }
-      default: return t.expressionStatement(buildExprNode(c, 0))
+      case 'ExpressionStatement':
+        return t.expressionStatement(buildExpr(0).node)
+      default: return t.emptyStatement()
     }
   }
 

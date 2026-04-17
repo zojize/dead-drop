@@ -211,13 +211,10 @@ describe('data lives in AST structure, not literal values', () => {
     // bigint values, template strings, labels, var names, catch params),
     // regenerate JS from the mutated AST, and verify decode still works.
 
+    let nameIdx = 0
     function randomizeName(): string {
-      // _ prefix guarantees it's never a JS keyword
-      const chars = 'abcdefghijklmnopqrstuvwxyz'
-      const len = 1 + Math.floor(Math.random() * 5)
-      let s = '_'
-      for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * chars.length)]
-      return s
+      // Unique names to avoid duplicate declarations
+      return `_r${nameIdx++}`
     }
 
     let nameCounter = 0
@@ -305,7 +302,7 @@ describe('encode output validity', () => {
     ]
     for (const msg of msgs) {
       const js = encode(msg)
-      expect(() => parse(js)).not.toThrow()
+      expect(() => parse(js, { sourceType: 'module' })).not.toThrow()
     }
   })
 
