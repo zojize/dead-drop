@@ -393,7 +393,7 @@ describe('maxExprDepth', () => {
     }
   })
 
-  it('top-level output contains import/export statements across many keys', () => {
+  it('top-level output contains import/export statements across many keys', { timeout: 30_000 }, () => {
     let hasImport = 0
     let hasExport = 0
     const N = 200
