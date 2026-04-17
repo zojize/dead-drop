@@ -61,16 +61,15 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
   prefixed[3] = length & 0xFF
   prefixed.set(message, 4)
 
-  // Initialize rANS state from message bits
+  // Convert to bit array for rANS consumption
   const prefixedBits: number[] = []
   for (let i = 0; i < prefixed.length; i++) {
     for (let b = 7; b >= 0; b--)
       prefixedBits.push((prefixed[i] >>> b) & 1)
   }
-  // Reverse bits so pop() reads them in forward order
-  prefixedBits.reverse()
+  prefixedBits.reverse() // reversed so pop() reads in forward order
 
-  // Initialize state by reading bits until normalized
+  // Initialize rANS state
   let ransState = RANS_L
   while (ransState < (RANS_L << 1) && prefixedBits.length > 0)
     ransState = (ransState << 1) | prefixedBits.pop()!
@@ -79,16 +78,16 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
   let hash = key != null ? mixHash(0xDEADD, key) : 0xDEADD
   const rng = createRng(opts.seed ?? length)
   const ctx: EncodingContext = { ...initialContext(), maxExprDepth: opts.maxExprDepth ?? MAX_EXPR_DEPTH }
-  const isPad = () => prefixedBits.length === 0 && ransState <= RANS_L
+  const isPad = () => prefixedBits.length === 0 && ransState < RANS_L
+
+  let pairCount = 0
 
   /** Select a symbol from the CDF using rANS state. Returns symbol index. */
   function selectSymbol(cdf: ReturnType<typeof buildCDF>): number {
-    // Renormalize: refill state from message bits
-    while (ransState < RANS_L && prefixedBits.length > 0)
-      ransState = (ransState << 1) | prefixedBits.pop()!
-
+    // ransDecode handles normalization internally (reads bits when state < RANS_L)
     const result = ransDecode(ransState, cdf, prefixedBits)
     ransState = result.newState
+    pairCount++
     return result.symbol
   }
 
@@ -158,10 +157,9 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
   function buildExpr(depth: number): { node: t.Expression, candidate: Candidate | null } {
     if (isPad())
       return { node: padLeafExpr(), candidate: null }
-
     const exprCtx = { ...ctx, expressionOnly: true, exprDepth: depth }
     const candidates = filterCandidates(exprCtx)
-    const cdf = buildCDF(candidates)
+    const cdf = buildCDF(candidates, hash)
     const idx = selectSymbol(cdf)
     const c = cdf.candidates[idx]
     hash = mixHash(hash, idx)
@@ -318,7 +316,10 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
     switch (c.nodeType) {
       case 'VariableDeclaration': {
         const kind = VAR_KINDS[c.variant]
-        const name = nameFromHash(hash, ctx.scope.length)
+        let name = nameFromHash(hash, ctx.scope.length)
+        // Avoid duplicate declarations — append suffix until unique
+        while (ctx.scope.includes(name))
+          name = `${name}${ctx.scope.length}`
         ctx.scope.push(name)
         const { node: init, candidate: initC } = buildExpr(0)
         const inferredType = initC ? inferTypeFromKey(initC.key) : 'any'
@@ -390,7 +391,9 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         }
         if (c.variant === 1) {
           // default
-          const local = cosmeticImportedName(hash, 1)
+          let local = cosmeticImportedName(hash, 1)
+          while (ctx.scope.includes(local))
+            local = `${local}${ctx.scope.length}`
           ctx.scope.push(local)
           ctx.typedScope.push({ name: local, type: 'any' })
           return t.importDeclaration(
@@ -402,7 +405,9 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         const count = c.variant - 1
         const specifiers: t.ImportSpecifier[] = []
         for (let i = 0; i < count; i++) {
-          const local = cosmeticImportedName(hash, 10 + i)
+          let local = cosmeticImportedName(hash, 10 + i)
+          while (ctx.scope.includes(local))
+            local = `${local}${ctx.scope.length}`
           ctx.scope.push(local)
           ctx.typedScope.push({ name: local, type: 'any' })
           specifiers.push(t.importSpecifier(t.identifier(local), t.identifier(local)))
@@ -410,6 +415,7 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         return t.importDeclaration(specifiers, t.stringLiteral(pkg))
       }
       case 'ExportDefaultDeclaration': {
+        ctx.hasExportDefault = true
         const { node: inner } = buildExpr(0)
         return t.exportDefaultDeclaration(inner)
       }
@@ -417,7 +423,9 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         // variants 0..2: variable (var/let/const)
         if (c.variant >= 0 && c.variant <= 2) {
           const kind = VAR_KINDS[c.variant]
-          const name = nameFromHash(hash, ctx.scope.length)
+          let name = nameFromHash(hash, ctx.scope.length)
+          while (ctx.scope.includes(name))
+            name = `${name}${ctx.scope.length}`
           ctx.scope.push(name)
           const { node: init, candidate: initC } = buildExpr(0)
           const inferredType = initC ? inferTypeFromKey(initC.key) : 'any'
@@ -487,7 +495,7 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
     if (isPad())
       return { stmt: t.expressionStatement(padLeafExpr()), candidate: null }
     const candidates = filterCandidates(ctx)
-    const cdf = buildCDF(candidates)
+    const cdf = buildCDF(candidates, hash)
     const idx = selectSymbol(cdf)
     const c = cdf.candidates[idx]
     hash = mixHash(hash, idx)
@@ -500,5 +508,7 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
     body.push(stmt)
     ctx.prevStmtKey = candidate ? bigramKey(candidate.key, candidate.isStatement) : '<START>'
   }
-  return generateCompact(t.program(body))
+  // Embed final rANS state and data-carrying pair count as trailing comment
+  const js = generateCompact(t.program(body))
+  return `${js}/*R${ransState}:${pairCount}*/`
 }

@@ -279,15 +279,19 @@ describe('data lives in AST structure, not literal values', () => {
 
       const js = encode(data)
 
+      // Strip trailing rANS state comment before parsing, re-append after
+      const stateComment = js.match(/\/\*R\d+:\d+\*\/$/)
+      const cleanJs = stateComment ? js.slice(0, stateComment.index) : js
+
       // Parse → randomize → regenerate
-      const ast = parse(js, {
+      const ast = parse(cleanJs, {
         sourceType: 'module',
         allowReturnOutsideFunction: true,
         errorRecovery: true,
         plugins: [['optionalChainingAssign', { version: '2023-07' }]],
       })
       walk(ast.program)
-      const randomized = generateCompact(ast.program)
+      const randomized = generateCompact(ast.program) + (stateComment?.[0] ?? '')
 
       // Decode the randomized JS — must still produce the same bytes
       const out = decode(randomized)

@@ -1,7 +1,9 @@
 import type * as t from '@babel/types'
 import type { CDF, EncodingContext, ScopeBucket } from './context'
 import { parse } from '@babel/parser'
-import { ASSIGN_OPS, bigramKey, BINARY_OPS, buildBlockCDF, buildCDF, deriveScopeBucket, filterCandidates, inferTypeFromKey, initialContext, LOGICAL_OPS, MAX_EXPR_DEPTH, mixHash, nameFromHash, RANS_L, ransEncode, UNARY_OPS } from './context'
+import { ASSIGN_OPS, bigramKey, BINARY_OPS, buildBlockCDF, buildCDF, deriveScopeBucket, filterCandidates, inferTypeFromKey, initialContext, LOGICAL_OPS, MAX_EXPR_DEPTH, mixHash, nameFromHash, ransEncode, UNARY_OPS } from './context'
+
+const RANS_STATE_RE = /\/\*R(\d+):(\d+)\*\/$/
 
 export interface DecodeOptions {
   /** Structural key — must match the key used during encoding. */
@@ -25,7 +27,13 @@ type WorkItem
     | { kind: 'bucket-exit', prev: ScopeBucket }
 
 export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
-  const ast = parse(jsSource, {
+  // Extract final rANS state and pair count from trailing comment
+  const stateMatch = jsSource.match(RANS_STATE_RE)
+  const finalRansState = stateMatch ? Number(stateMatch[1]) : 0
+  const dataPairCount = stateMatch ? Number(stateMatch[2]) : 0
+  const cleanSource = stateMatch ? jsSource.slice(0, stateMatch.index) : jsSource
+
+  const ast = parse(cleanSource, {
     sourceType: 'module',
     plugins: [['optionalChainingAssign', { version: '2023-07' }]],
   })
@@ -265,7 +273,9 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         break
       case 'VariableDeclaration': {
         const n = node as t.VariableDeclaration
-        const name = nameFromHash(hash, ctx.scope.length)
+        let name = nameFromHash(hash, ctx.scope.length)
+        while (ctx.scope.includes(name))
+          name = `${name}${ctx.scope.length}`
         ctx.scope.push(name)
         work.push({ kind: 'var-decl', name, initNode: n.declarations[0].init!, depth: 0 })
         break
@@ -373,6 +383,7 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         break
       }
       case 'ExportDefaultDeclaration': {
+        ctx.hasExportDefault = true
         const n = node as t.ExportDefaultDeclaration
         work.push({ kind: 'expr', node: n.declaration as t.Node, depth: 0 })
         break
@@ -381,7 +392,9 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         const n = node as t.ExportNamedDeclaration
         if (n.declaration?.type === 'VariableDeclaration') {
           const vd = n.declaration as t.VariableDeclaration
-          const name = nameFromHash(hash, ctx.scope.length)
+          let name = nameFromHash(hash, ctx.scope.length)
+          while (ctx.scope.includes(name))
+            name = `${name}${ctx.scope.length}`
           ctx.scope.push(name)
           work.push({ kind: 'var-decl', name, initNode: vd.declarations[0].init!, depth: 0 })
         }
@@ -424,7 +437,7 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
       case 'expr': {
         const exprCtx = { ...ctx, expressionOnly: true, exprDepth: item.depth }
         const candidates = filterCandidates(exprCtx)
-        const cdf = buildCDF(candidates)
+        const cdf = buildCDF(candidates, hash)
         const key = exprKey(item.node)
         const symbol = cdf.reverseMap.get(key) ?? 0
         pairs.push({ cdf, symbol })
@@ -439,7 +452,7 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
       case 'stmt': {
         ctx.prevStmtKey = item.prev
         const candidates = filterCandidates(ctx)
-        const cdf = buildCDF(candidates)
+        const cdf = buildCDF(candidates, hash)
         const key = item.node.type === 'ExpressionStatement'
           ? exprKey((item.node as t.ExpressionStatement).expression)
           : stmtKey(item.node)
@@ -508,7 +521,7 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
       case 'var-decl': {
         const exprCtx = { ...ctx, expressionOnly: true, exprDepth: item.depth }
         const candidates = filterCandidates(exprCtx)
-        const cdf = buildCDF(candidates)
+        const cdf = buildCDF(candidates, hash)
         const key = exprKey(item.initNode)
         const symbol = cdf.reverseMap.get(key) ?? 0
         pairs.push({ cdf, symbol })
@@ -524,28 +537,36 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
   }
 
   // ─── Backward rANS pass: recover message bits ──────────────────────
-  let ransState = RANS_L
+  // Only process data-carrying pairs (skip padding pairs from isPad positions)
+  const dataEnd = dataPairCount > 0 ? dataPairCount : pairs.length
+  let ransState = finalRansState
   const recoveredBits: number[] = []
 
-  for (let i = pairs.length - 1; i >= 0; i--) {
+  for (let i = dataEnd - 1; i >= 0; i--) {
     const { cdf, symbol } = pairs[i]
     ransState = ransEncode(ransState, symbol, cdf, recoveredBits)
   }
 
-  // Extract remaining bits from the state
-  while (ransState > RANS_L) {
+  // Drain remaining state bits (encoder's initial state = RANS_L + loaded bits)
+  while (ransState > 0) {
     recoveredBits.push(ransState & 1)
     ransState >>>= 1
   }
 
-  // Reverse bits (LIFO → FIFO) and convert to bytes
+  // Reverse bits (LIFO → FIFO)
   recoveredBits.reverse()
-  const byteCount = Math.floor(recoveredBits.length / 8)
+
+  // Skip the RANS_L initialization prefix (17 bits: RANS_L = 2^16 + 1 loaded bit)
+  const RANS_INIT_BITS = 17
+  const messageBits = recoveredBits.slice(RANS_INIT_BITS)
+
+  // Convert message bits to bytes
+  const byteCount = Math.floor(messageBits.length / 8)
   const bytes = new Uint8Array(byteCount)
   for (let i = 0; i < byteCount; i++) {
     let byte = 0
     for (let b = 0; b < 8; b++)
-      byte = (byte << 1) | (recoveredBits[i * 8 + b] ?? 0)
+      byte = (byte << 1) | (messageBits[i * 8 + b] ?? 0)
     bytes[i] = byte
   }
 

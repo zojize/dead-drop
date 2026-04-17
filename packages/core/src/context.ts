@@ -35,8 +35,10 @@ export interface ScopeEntry {
   type: ScopeType
 }
 
-/** Max expression nesting depth before forcing leaf-only candidates. */
-export const MAX_EXPR_DEPTH = Infinity // default — override via createCodec for browser use
+/** Max expression nesting depth before forcing leaf-only candidates.
+ * Default 10 — keeps encoding fast when rANS state is drained (all nodes
+ * go through the coder, even padding). Override via createCodec. */
+export const MAX_EXPR_DEPTH = 10
 
 export type ScopeBucket = 'top-level' | 'function-body' | 'loop-body' | 'block-body'
 
@@ -66,6 +68,7 @@ export interface EncodingContext {
   blockDepth: number
   scopeBucket: ScopeBucket
   prevStmtKey: string
+  hasExportDefault: boolean
 }
 
 export function initialContext(): EncodingContext {
@@ -81,6 +84,7 @@ export function initialContext(): EncodingContext {
     blockDepth: 0,
     scopeBucket: 'top-level',
     prevStmtKey: '<START>',
+    hasExportDefault: false,
   }
 }
 
@@ -238,18 +242,35 @@ export interface CDF {
   reverseMap: Map<string, number>
 }
 
-export function buildCDF(candidates: Candidate[]): CDF {
+export function buildCDF(candidates: Candidate[], hash = 0): CDF {
   if (candidates.length === 0)
     throw new Error('No candidates for CDF')
 
-  const n = candidates.length
-  const totalWeight = candidates.reduce((s, c) => s + c.weight, 0)
+  // Shuffle candidates deterministically using hash (same role as buildTable's shuffle)
+  // This ensures different hash states map the same CDF range to different candidates
+  const shuffled = [...candidates]
+  let s = hash | 0
+  function rng(): number {
+    s = s + 0x6D2B79F5 | 0
+    let z = Math.imul(s ^ s >>> 15, 1 | s)
+    z = z + Math.imul(z ^ z >>> 7, 61 | z) ^ z
+    return ((z ^ z >>> 14) >>> 0)
+  }
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = rng() % (i + 1)
+    const tmp = shuffled[i]
+    shuffled[i] = shuffled[j]
+    shuffled[j] = tmp
+  }
+
+  const n = shuffled.length
+  const totalWeight = shuffled.reduce((s, c) => s + c.weight, 0)
 
   // Initial allocation: proportional to weight, minimum 1
   const freqs = Array.from<number>({ length: n })
   let allocated = 0
   for (let i = 0; i < n; i++) {
-    freqs[i] = Math.max(1, Math.round((candidates[i].weight / totalWeight) * CDF_TOTAL))
+    freqs[i] = Math.max(1, Math.round((shuffled[i].weight / totalWeight) * CDF_TOTAL))
     allocated += freqs[i]
   }
 
@@ -277,20 +298,25 @@ export function buildCDF(candidates: Candidate[]): CDF {
   // Reverse map: candidate key → index
   const reverseMap = new Map<string, number>()
   for (let i = 0; i < n; i++)
-    reverseMap.set(candidates[i].key, i)
+    reverseMap.set(shuffled[i].key, i)
 
-  return { cumFreqs, freqs, total: CDF_TOTAL, candidates, reverseMap }
+  return { cumFreqs, freqs, total: CDF_TOTAL, candidates: shuffled, reverseMap }
 }
 
 export const RANS_L = 1 << 16
+
+/** Encode normalization factor: (RANS_L / CDF_TOTAL) << 1 */
+const RANS_ENC_NORM = (RANS_L >>> CDF_BITS) << 1
 
 export function ransEncode(x: number, symbol: number, cdf: CDF, outBits: number[]): number {
   const freq = cdf.freqs[symbol]
   const cumFreq = cdf.cumFreqs[symbol]
   const M = cdf.total
 
-  // Renormalize: output bits while state would overflow after encoding
-  while (x >= freq * (RANS_L << 1)) {
+  // Renormalize: output bits to bring x into [freq*L/M, freq*2L/M)
+  // so that after encode, state is in [RANS_L, 2*RANS_L)
+  const xMax = freq * RANS_ENC_NORM
+  while (x >= xMax) {
     outBits.push(x & 1)
     x >>>= 1
   }
@@ -609,6 +635,9 @@ export function filterCandidates(ctx: EncodingContext): Candidate[] {
     ) {
       return false
     }
+    // Only one export default per module
+    if (c.nodeType === 'ExportDefaultDeclaration' && ctx.hasExportDefault)
+      return false
 
     // Context-gated entries
     if (c.nodeType === 'ReturnStatement' && !ctx.inFunction)
