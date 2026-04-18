@@ -80,6 +80,8 @@ const numberValues = new Map<string, number>()
 const funcNames = new Map<string, number>()
 const packageNames = new Map<string, number>()
 const importedNames = new Map<string, number>()
+// Track which import names are actually imported from each package
+const packageImports = new Map<string, Map<string, number>>()
 
 // JS keywords to exclude from identifier lists
 const KEYWORDS = new Set([
@@ -175,13 +177,23 @@ function walk(node: any): void {
       break
     case 'ImportDeclaration': {
       const src = node.source
-      if (src && src.type === 'StringLiteral' && src.value.length > 0 && src.value.length <= 50 && !src.value.startsWith('.') && !src.value.startsWith('/')) {
+      const validPkg = src && src.type === 'StringLiteral' && src.value.length > 0 && src.value.length <= 50 && !src.value.startsWith('.') && !src.value.startsWith('/')
+      if (validPkg) {
         inc(packageNames, src.value)
       }
       if (Array.isArray(node.specifiers)) {
         for (const spec of node.specifiers) {
           if (spec.local && spec.local.type === 'Identifier' && RE_IDENT.test(spec.local.name) && !KEYWORDS.has(spec.local.name)) {
             inc(importedNames, spec.local.name)
+            // Track which names are imported from which package
+            if (validPkg) {
+              let pkgMap = packageImports.get(src.value)
+              if (!pkgMap) {
+                pkgMap = new Map()
+                packageImports.set(src.value, pkgMap)
+              }
+              inc(pkgMap, spec.local.name)
+            }
           }
         }
       }
@@ -415,6 +427,16 @@ const GLOBALS: Record<string, string[]> = {
   ],
 }
 
+// Build packageImports output: for each top package, list its top imports
+const topPackages = topN(packageNames, 200)
+const packageImportsOut: Record<string, string[]> = {}
+for (const pkg of topPackages) {
+  const pkgMap = packageImports.get(pkg)
+  if (pkgMap && pkgMap.size > 0) {
+    packageImportsOut[pkg] = topN(pkgMap, 20)
+  }
+}
+
 // Write output
 const cosmetics = {
   identifiers: topIdents,
@@ -422,8 +444,9 @@ const cosmetics = {
   strings: topStrings,
   numbers: topNumbers,
   functionNames: topFuncNames,
-  packageNames: topN(packageNames, 200),
+  packageNames: topPackages,
   importedNames: topN(importedNames, 200),
+  packageImports: packageImportsOut,
   globals: GLOBALS,
 }
 

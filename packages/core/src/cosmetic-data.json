@@ -23,183 +23,183 @@
     "b",
     "Object",
     "p",
-    "index",
     "context",
+    "index",
     "result",
-    "prototype",
     "state",
+    "prototype",
     "module",
     "data",
     "x",
     "path",
-    "get",
     "f",
     "u",
+    "get",
     "args",
     "d",
-    "error",
     "props",
+    "error",
     "y",
     "request",
-    "start",
     "opts",
+    "start",
     "source",
     "m",
     "parent",
     "obj",
     "_",
     "end",
-    "v",
     "set",
     "input",
     "target",
+    "v",
     "arguments",
-    "err",
     "call",
-    "k",
     "match",
-    "str",
+    "k",
     "children",
-    "h",
-    "id",
+    "err",
+    "str",
     "slice",
     "map",
-    "next",
     "Math",
-    "Error",
+    "next",
+    "h",
     "token",
-    "split",
+    "Error",
+    "id",
     "schema",
+    "split",
     "j",
     "defineProperty",
     "fn",
-    "buffer",
     "object",
     "el",
     "keys",
-    "constructor",
     "test",
     "task",
+    "constructor",
     "code",
     "params",
     "Array",
+    "buffer",
     "instance",
-    "offset",
     "val",
     "message",
-    "values",
+    "offset",
     "add",
+    "values",
     "size",
     "stream",
     "vnode",
     "Symbol",
     "replace",
+    "width",
     "body",
-    "g",
     "self",
+    "g",
     "config",
     "isArray",
-    "width",
-    "envObject",
-    "apply",
-    "callback",
     "string",
+    "apply",
     "date",
     "loc",
+    "max",
+    "callback",
     "position",
     "array",
     "has",
-    "max",
     "join",
     "other",
     "item",
     "pattern",
     "begin",
     "forEach",
-    "out",
     "chunk",
+    "out",
     "pos",
     "number",
     "line",
-    "enumerable",
     "child",
+    "enumerable",
     "output",
-    "scope",
     "M",
-    "concat",
-    "status",
     "range",
-    "String",
+    "concat",
+    "scope",
     "count",
+    "String",
+    "status",
     "resolve",
-    "process",
     "errors",
+    "res",
     "url",
     "entry",
-    "res",
-    "toString",
+    "process",
     "w",
+    "toString",
     "flags",
-    "env",
     "prop",
-    "ctx",
-    "A",
-    "charCodeAt",
-    "_a",
-    "format",
-    "C",
-    "TypeError",
-    "console",
-    "filter",
-    "controller",
-    "left",
     "material",
-    "len",
+    "A",
+    "format",
+    "charCodeAt",
+    "C",
+    "left",
+    "controller",
+    "filter",
+    "console",
+    "ctx",
     "destination",
     "hljs",
     "parser",
     "prev",
+    "TypeError",
     "it",
+    "min",
+    "_a",
+    "z",
     "from",
     "root",
-    "min",
+    "len",
     "one",
     "D",
     "S",
-    "z",
-    "indexOf",
     "content",
     "expression",
     "Set",
+    "indexOf",
     "stack",
-    "arg",
     "R",
-    "func",
     "def",
+    "arg",
     "parts",
-    "cb",
     "ch",
-    "init",
-    "ret",
-    "create",
     "L",
-    "B",
-    "includes",
-    "idx",
-    "right",
-    "ref",
+    "init",
     "builder",
-    "version",
+    "B",
+    "cb",
+    "includes",
+    "right",
+    "create",
+    "idx",
     "E",
-    "segment",
-    "tag",
     "className",
+    "segment",
     "s0",
-    "arr",
+    "version",
     "current",
+    "ret",
+    "tag",
     "kind",
-    "Number",
-    "mode"
+    "texture",
+    "event",
+    "TAG_ID",
+    "mode",
+    "_i",
+    "dep",
+    "method"
   ],
   "properties": [
     "length",
@@ -207,11 +207,11 @@
     "type",
     "prototype",
     "value",
-    "exports",
     "name",
-    "get",
+    "exports",
     "call",
     "slice",
+    "get",
     "split",
     "defineProperty",
     "set",
@@ -225,22 +225,22 @@
     "apply",
     "join",
     "forEach",
-    "has",
     "parent",
+    "has",
     "isArray",
     "concat",
     "charCodeAt",
     "start",
     "children",
     "index",
-    "id",
     "next",
     "keys",
     "toString",
-    "indexOf",
-    "error",
-    "y",
     "x",
+    "y",
+    "indexOf",
+    "id",
+    "error",
     "end",
     "includes",
     "hy",
@@ -251,27 +251,25 @@
     "data",
     "props",
     "source",
-    "create",
     "body",
-    "buffer",
     "key",
     "path",
+    "create",
     "filter",
-    "then",
     "bind",
     "assign",
     "size",
+    "then",
     "hasOwnProperty",
-    "status",
-    "constructor",
     "position",
+    "constructor",
     "max",
-    "node",
     "width",
+    "status",
     "flags",
+    "node",
     "context",
     "asm",
-    "setLastError",
     "toLowerCase",
     "pop",
     "min",
@@ -282,126 +280,128 @@
     "hooks",
     "stringify",
     "message",
-    "write",
     "startsWith",
+    "z",
+    "write",
     "content",
     "pos",
-    "z",
+    "buffer",
     "module",
-    "values",
-    "trim",
-    "log",
-    "init",
-    "copy",
-    "offset",
-    "opts",
-    "some",
-    "delete",
-    "for",
     "mul",
+    "trim",
+    "values",
+    "log",
+    "copy",
+    "init",
+    "opts",
+    "delete",
+    "some",
+    "for",
     "left",
-    "line",
     "input",
+    "line",
     "on",
     "version",
     "code",
-    "env",
     "splice",
+    "env",
+    "object",
     "charAt",
     "kind",
-    "object",
     "parse",
+    "style",
     "schema",
     "cwd",
     "scope",
     "format",
-    "stack",
+    "offset",
     "s",
+    "stack",
     "now",
     "operator",
     "emit",
     "right",
     "_",
+    "height",
     "entries",
     "nodes",
     "tap",
     "shift",
-    "height",
     "floor",
-    "style",
     "iterator",
     "column",
+    "attributes",
     "report",
     "warn",
-    "attributes",
-    "tag",
     "exec",
+    "tag",
+    "sort",
     "__esModule",
     "output",
-    "sort",
     "sectionStart",
     "clone",
     "clear",
+    "toVar",
     "result",
     "valueCallback",
     "raise",
     "warned",
     "keyPath",
-    "toVar",
     "finishNode",
     "substring",
+    "sub",
     "root",
     "v",
     "abs",
     "done",
     "visit",
     "raw",
-    "getOwnPropertyDescriptor",
     "count",
-    "dispose",
+    "getOwnPropertyDescriptor",
     "update",
     "openElements",
-    "config",
-    "sub",
-    "target",
-    "array",
-    "setAttribute",
-    "pendingTasks",
+    "material",
     "color",
+    "config",
+    "target",
+    "setAttribute",
+    "array",
+    "pendingTasks",
     "NODE_ENV",
     "eat",
+    "render",
     "arguments",
     "client",
-    "render",
     "TAG_ID",
-    "byteLength",
-    "mode",
-    "signal",
-    "material",
     "r",
+    "mode",
     "unshift",
     "locale",
-    "setUint32",
+    "signal",
     "close",
-    "print",
     "vnode",
+    "print",
     "ptr",
     "replay",
     "elements",
-    "headers",
+    "dispose",
+    "byteLength",
     "origin",
-    "reduce",
+    "headers",
     "properties",
+    "reduce",
     "params",
+    "uniforms",
     "toUpperCase",
     "subscribe",
+    "a",
     "defineLocale",
-    "uniforms",
     "component",
     "insertionMode",
     "items",
-    "a",
-    "args"
+    "dot",
+    "pow",
+    "round"
   ],
   "strings": [
     "1",
@@ -410,9 +410,9 @@
     "object",
     "2",
     "_",
-    "undefined",
     " ",
     "boolean",
+    "undefined",
     "number",
     "__esModule",
     ".",
@@ -427,8 +427,8 @@
     "f",
     "any",
     "4",
-    "symbol",
     "-",
+    "symbol",
     "type",
     ",",
     "\"",
@@ -441,17 +441,17 @@
     ":",
     "*",
     "[",
-    "error",
     "]",
+    "error",
     "Identifier",
     "}",
     "8",
     "L",
-    "production",
     "\\",
+    "production",
     "146",
-    "name",
     "$",
+    "name",
     "'",
     "3",
     "140",
@@ -459,8 +459,8 @@
     "145",
     ">",
     "144",
-    "A B",
     "?",
+    "A B",
     "HH:mm:ss",
     "!",
     "143",
@@ -537,12 +537,12 @@
     "#",
     "125",
     "18.0",
+    "float",
     "..",
     "^",
     "17.2",
     "children",
     "15.4",
-    "float",
     "17.3",
     "16.5",
     "./_lib/convertToFP.js",
@@ -553,26 +553,26 @@
     "17.0",
     "d",
     "y",
+    "text",
     "delete",
     "path",
     "130",
     "w",
-    "text",
     "115",
     "utf8",
     "m",
     "formatting",
+    "none",
     "meta",
     "key",
     "data",
     "x",
     "120",
-    "end",
     "true",
+    "end",
     "148",
     "16.2",
     "5",
-    "none",
     "15.5",
     "16.0",
     "Object",
@@ -585,19 +585,19 @@
     "95",
     "123",
     "P",
+    "div",
     "i",
     "return",
     "keyword",
     "D MMMM YYYY HH:mm",
     "92",
-    "p",
     "input",
+    "p",
     "S",
     "119",
-    "div",
+    "right",
     "96",
     "MemberExpression",
-    "right",
     "in",
     "116",
     "121",
@@ -627,23 +627,22 @@
     0.5,
     14,
     15,
-    64,
     128,
+    64,
     39,
-    20,
     60,
+    20,
     24,
     49,
     48,
     1000,
     17,
-    63,
-    23,
     28,
     31,
     30,
-    18,
+    63,
     47,
+    18,
     36,
     34,
     256,
@@ -652,9 +651,10 @@
     62,
     25,
     21,
-    1024,
+    23,
     46,
     40,
+    1024,
     22,
     61,
     33,
@@ -671,13 +671,13 @@
     90,
     35,
     26,
-    58,
     50,
-    65536,
+    58,
     59,
     73,
     91,
     27,
+    65536,
     37,
     43,
     512,
@@ -686,9 +686,9 @@
     93,
     2048,
     96,
-    55296,
-    127,
     95,
+    127,
+    55296,
     200,
     125,
     70,
@@ -701,11 +701,11 @@
     55,
     56320,
     500,
-    53,
-    56,
     0.01,
+    53,
     52,
-    0.00539
+    0.00539,
+    66
   ],
   "functionNames": [
     "emitWarning",
@@ -794,7 +794,6 @@
     "D",
     "range",
     "transform",
-    "__",
     "y",
     "wrap",
     "w",
@@ -803,18 +802,19 @@
     "find",
     "each",
     "verb",
-    "abort",
     "toJSON",
     "plural",
     "isFunction",
-    "escape"
+    "escape",
+    "resolve",
+    "v"
   ],
   "packageNames": [
     "three",
     "#compiler/builders",
     "three/tsl",
-    "tslib",
     "three/webgpu",
+    "tslib",
     "esm-env",
     "minimatch",
     "#client/constants",
@@ -933,7 +933,6 @@
     "uvu/assert",
     "uvu",
     "@pkgr/core",
-    "@emnapi/wasi-threads",
     "get-stream",
     "http-cache-semantics",
     "keyv",
@@ -983,6 +982,8 @@
     "#supports-color",
     "node:tty",
     "robust-predicates",
+    "three/addons/inspector/Extension.js",
+    "three/addons/inspector/ui/Tab.js",
     "https://cdn.jsdelivr.net/npm/mp4box@0.5.3/+esm",
     "preact-render-to-string",
     "buffer",
@@ -1008,8 +1009,7 @@
     "@webassemblyjs/helper-numbers",
     "d3-ease",
     "acorn-jsx",
-    "eslint-visitor-keys",
-    "get-east-asian-width"
+    "eslint-visitor-keys"
   ],
   "importedNames": [
     "fn",
@@ -1019,14 +1019,14 @@
     "Vector3",
     "dayjs",
     "operate",
-    "_curry2",
     "Vector2",
+    "_curry2",
     "Fn",
+    "Color",
     "createOperatorSubscriber",
     "toDate",
-    "Color",
-    "b",
     "float",
+    "b",
     "formatDistance",
     "formatLong",
     "formatRelative",
@@ -1034,8 +1034,8 @@
     "match",
     "assertString",
     "buildFormatLongFn",
-    "BufferGeometry",
     "Matrix4",
+    "BufferGeometry",
     "e",
     "Mesh",
     "buildLocalizeFn",
@@ -1046,134 +1046,138 @@
     "warn",
     "vec3",
     "vec4",
+    "uniform",
     "noop",
-    "Float32BufferAttribute",
+    "HalfFloatType",
     "vec2",
+    "Float32BufferAttribute",
+    "Node",
     "util",
     "Observable",
     "_curry1",
-    "HalfFloatType",
-    "uniform",
-    "Node",
     "NodeMaterial",
+    "NodeUpdateType",
     "error",
+    "uv",
     "Loader",
     "identity",
     "_curry3",
     "constructFrom",
-    "uv",
-    "NodeUpdateType",
     "TempNode",
-    "LinearFilter",
     "max",
+    "LinearFilter",
+    "Vector4",
+    "Object3D",
+    "ShaderMaterial",
+    "FileLoader",
     "DEV",
     "w",
-    "Object3D",
-    "FileLoader",
-    "ShaderMaterial",
-    "Vector4",
-    "SRGBColorSpace",
     "nodeObject",
-    "colors",
-    "nodeProxy",
+    "SRGBColorSpace",
     "mix",
+    "colors",
     "sqrt",
+    "nodeProxy",
     "sin",
     "get",
+    "FloatType",
     "NearestFilter",
+    "abs",
     "BufferAttribute",
     "cos",
     "Parser",
     "LineBasicMaterial",
-    "abs",
     "If",
+    "Loop",
+    "RGBAFormat",
     "Quaternion",
     "MeshBasicMaterial",
-    "Subject",
-    "FloatType",
-    "RGBAFormat",
-    "WebGLRenderTarget",
     "texture",
+    "Subject",
+    "WebGLRenderTarget",
     "UniformsUtils",
+    "Matrix3",
     "ColorManagement",
     "walk",
     "DoubleSide",
     "map",
-    "Loop",
-    "Matrix3",
-    "BackSide",
     "MathUtils",
+    "Texture",
+    "RenderTarget",
     "clamp",
+    "BackSide",
+    "min",
+    "int",
     "constant",
     "normalizeDates",
     "ClampToEdgeWrapping",
-    "Texture",
-    "min",
     "keys",
     "hydrating",
     "ramp",
-    "RenderTarget",
-    "int",
+    "UnsignedByteType",
+    "add",
     "dev",
+    "QuadMesh",
     "Subscription",
     "utils",
     "_dispatchable",
     "slice",
-    "add",
     "epsilon",
     "DataTexture",
     "RepeatWrapping",
-    "UnsignedByteType",
+    "RendererUtils",
     "Pass",
     "parse",
     "mark_subtree_dynamic",
     "FullScreenQuad",
-    "QuadMesh",
     "Group",
     "__read",
     "_xfBase",
-    "__extends",
     "active_effect",
     "merge",
+    "DepthTexture",
+    "convertToTexture",
     "__spreadArray",
     "set",
-    "RendererUtils",
+    "Box3",
+    "renderGroup",
     "LineSegments",
     "asyncScheduler",
     "isPromise",
-    "Box3",
-    "DepthTexture",
     "PerspectiveCamera",
+    "__extends",
     "fileURLToPath",
     "filter",
     "isArray",
     "parseNDigits",
+    "reference",
     "dot",
-    "warnOnce",
-    "convertToTexture",
     "NoBlending",
     "addMethodChaining",
     "untrack",
     "isArrayLike",
     "sub",
-    "reference",
+    "UnsignedIntType",
+    "RedFormat",
     "Sphere",
     "Material",
     "curryN",
     "toInt",
     "normalize",
-    "LinearSRGBColorSpace",
+    "select",
+    "EventDispatcher",
+    "warnOnce",
+    "BoxGeometry",
     "popScheduler",
     "AST_Node",
     "constructNow",
-    "select",
     "defaultSource",
+    "PlaneGeometry",
+    "RGFormat",
     "LinearMipmapLinearFilter",
-    "RedFormat",
+    "smoothstep",
+    "passTexture",
     "mul",
-    "BoxGeometry",
-    "renderGroup",
-    "UnsignedIntType",
     "AST_Call",
     "AST_Sequence",
     "unescape",
@@ -1189,11 +1193,10 @@
     "hooks",
     "addFormatToken",
     "Plane",
-    "PlaneGeometry",
-    "smoothstep",
+    "Scene",
+    "LinearSRGBColorSpace",
     "normalView",
     "Line",
-    "Euler",
     "EMPTY",
     "arrRemove",
     "executeSchedule",
@@ -1205,14 +1208,1110 @@
     "radians",
     "getDefaultOptions",
     "timer",
-    "Scene",
+    "positionLocal",
     "SRGBTransfer",
-    "options",
-    "isTag",
-    "AST_Class",
-    "AST_Conditional",
-    "AST_Number"
+    "positionView",
+    "uniformArray"
   ],
+  "packageImports": {
+    "three": [
+      "Vector3",
+      "Color",
+      "Mesh",
+      "Matrix4",
+      "Vector2",
+      "BufferGeometry",
+      "ShaderMaterial",
+      "Loader",
+      "SRGBColorSpace",
+      "FileLoader",
+      "HalfFloatType",
+      "Float32BufferAttribute",
+      "UniformsUtils",
+      "MathUtils",
+      "WebGLRenderTarget",
+      "BufferAttribute",
+      "LinearFilter",
+      "Quaternion",
+      "Object3D",
+      "MeshBasicMaterial"
+    ],
+    "#compiler/builders": [
+      "b"
+    ],
+    "three/tsl": [
+      "Fn",
+      "vec4",
+      "float",
+      "uv",
+      "uniform",
+      "vec2",
+      "vec3",
+      "Loop",
+      "max",
+      "texture",
+      "convertToTexture",
+      "mix",
+      "nodeObject",
+      "If",
+      "int",
+      "passTexture",
+      "dot",
+      "abs",
+      "NodeUpdateType",
+      "clamp"
+    ],
+    "three/webgpu": [
+      "NodeMaterial",
+      "Vector2",
+      "TempNode",
+      "RendererUtils",
+      "QuadMesh",
+      "RenderTarget",
+      "Vector3",
+      "NodeUpdateType",
+      "Mesh",
+      "HalfFloatType",
+      "Color",
+      "Node",
+      "DoubleSide",
+      "DepthTexture",
+      "Vector4",
+      "PassNode",
+      "Matrix4",
+      "FloatType",
+      "PlaneGeometry",
+      "RedFormat"
+    ],
+    "tslib": [
+      "__read",
+      "__spreadArray",
+      "__extends",
+      "__values",
+      "__generator",
+      "__assign",
+      "__asyncGenerator",
+      "__await",
+      "__rest",
+      "__asyncValues",
+      "__awaiter"
+    ],
+    "esm-env": [
+      "DEV",
+      "BROWSER"
+    ],
+    "minimatch": [
+      "Minimatch",
+      "GLOBSTAR",
+      "escape",
+      "unescape"
+    ],
+    "#client/constants": [
+      "DIRTY",
+      "EFFECT_TRANSPARENT",
+      "STATE_SYMBOL",
+      "CLEAN",
+      "DESTROYED",
+      "MAYBE_DIRTY",
+      "DERIVED",
+      "ASYNC",
+      "REACTION_RAN",
+      "COMMENT_NODE",
+      "BLOCK_EFFECT",
+      "BRANCH_EFFECT",
+      "INERT",
+      "STALE_REACTION",
+      "ROOT_EFFECT",
+      "EFFECT_PRESERVED",
+      "CONNECTED",
+      "WAS_MARKED",
+      "EFFECT",
+      "RENDER_EFFECT"
+    ],
+    "node:path": [
+      "path",
+      "posix",
+      "win32",
+      "resolve",
+      "dirname",
+      "basename",
+      "presolve",
+      "prelative",
+      "pjoin",
+      "psep",
+      "sp",
+      "extname",
+      "sep"
+    ],
+    "d3-array": [
+      "Adder",
+      "bisect",
+      "ticks",
+      "ascending",
+      "tickStep",
+      "merge",
+      "extent",
+      "nice",
+      "thresholdSturges",
+      "blur2",
+      "max",
+      "tickIncrement",
+      "sequence",
+      "quantile",
+      "threshold",
+      "InternMap",
+      "range",
+      "bisector"
+    ],
+    "preact": [
+      "options",
+      "Component",
+      "Fragment",
+      "n",
+      "e",
+      "createElement",
+      "o",
+      "toChildArray",
+      "t",
+      "r",
+      "preactRender",
+      "u",
+      "i",
+      "l",
+      "c",
+      "f",
+      "preactHydrate",
+      "preactCloneElement",
+      "createRef",
+      "createContext"
+    ],
+    "domhandler": [
+      "isTag",
+      "hasChildren",
+      "Document",
+      "isDocument",
+      "Text",
+      "isText",
+      "isComment",
+      "checkIsDocument",
+      "cloneNode",
+      "DomHandler",
+      "Element",
+      "ProcessingInstruction",
+      "Comment",
+      "isDirective",
+      "isCDATA"
+    ],
+    "zimmerframe": [
+      "walk",
+      "zimmerframe_walk"
+    ],
+    "node:url": [
+      "fileURLToPath",
+      "pathToFileURL",
+      "urlLib",
+      "URL",
+      "formatUrl"
+    ],
+    "fs": [
+      "readFileSync",
+      "lstatSync",
+      "readdirCB",
+      "readdirSync",
+      "readlinkSync",
+      "rps",
+      "statcb",
+      "watchFile",
+      "unwatchFile",
+      "fs_watch",
+      "statSync",
+      "writeFile",
+      "require$$0$2"
+    ],
+    "node:fs": [
+      "actualFS",
+      "fs",
+      "readFileSync",
+      "promises",
+      "statcb",
+      "Stats",
+      "fs_watch",
+      "unwatchFile",
+      "watchFile",
+      "statSync",
+      "createReadStream"
+    ],
+    "node:stream": [
+      "Writable",
+      "Stream",
+      "Readable",
+      "PassThroughStream",
+      "PassThrough",
+      "Transform",
+      "ReadableStream",
+      "stream",
+      "pump",
+      "TransformStream",
+      "Duplex",
+      "finished"
+    ],
+    "domutils": [
+      "removeElement",
+      "textContent",
+      "DomUtils",
+      "innerText",
+      "getChildren",
+      "getSiblings",
+      "nextElementSibling",
+      "prevElementSibling",
+      "uniqueSort",
+      "getFeed"
+    ],
+    "d3-selection": [
+      "select",
+      "pointer",
+      "selection",
+      "namespace",
+      "style",
+      "selector",
+      "selectorAll",
+      "matcher"
+    ],
+    "node:fs/promises": [
+      "lstat",
+      "readdir",
+      "realpath",
+      "readlink",
+      "stat",
+      "fsrealpath",
+      "open",
+      "nativeFsp"
+    ],
+    "path": [
+      "resolve",
+      "dirname",
+      "basename",
+      "sysPath",
+      "normalize",
+      "require$$0$1"
+    ],
+    "d3-interpolate": [
+      "interpolate",
+      "interpolateRound",
+      "interpolateNumber",
+      "interpolateCubehelixLong",
+      "interpolateTransform",
+      "piecewise",
+      "interpolateValue",
+      "interpolateRgbBasis",
+      "interpolateRgbBasisClosed",
+      "interpolateZoom",
+      "interpolateRgb",
+      "interpolateString"
+    ],
+    "htmlparser2": [
+      "ElementType",
+      "parseDocument",
+      "parseWithHtmlparser2",
+      "htmlparser2"
+    ],
+    "minipass": [
+      "Minipass"
+    ],
+    "d3-color": [
+      "cubehelix",
+      "color",
+      "rgb",
+      "colorHsl",
+      "colorHcl",
+      "colorCubehelix",
+      "colorLab",
+      "colorRgb"
+    ],
+    "@webassemblyjs/ast": [
+      "traverse",
+      "t",
+      "shiftSection",
+      "getSectionMetadata",
+      "getSectionMetadatas",
+      "isFunc",
+      "isGlobal",
+      "assertHasLoc",
+      "orderedInsertNode",
+      "getEndOfSection",
+      "isAnonymous",
+      "isInstruction"
+    ],
+    "node:util": [
+      "types",
+      "promisify",
+      "inspect",
+      "deprecate",
+      "isDeepStrictEqual"
+    ],
+    "util": [
+      "format",
+      "util",
+      "require$$2",
+      "Util"
+    ],
+    "@webassemblyjs/helper-wasm-bytecode": [
+      "constants",
+      "getSectionForNode"
+    ],
+    "node:events": [
+      "EventEmitter",
+      "addAbortListener",
+      "errorMonitor",
+      "on"
+    ],
+    "is-reference": [
+      "is_reference"
+    ],
+    "@vue/shared": [
+      "NOOP",
+      "extend",
+      "isString",
+      "isObject",
+      "isArray",
+      "capitalize",
+      "EMPTY_OBJ",
+      "isSymbol",
+      "isOn",
+      "isFunction",
+      "makeMap",
+      "normalizeCssVarValue",
+      "includeBooleanAttr",
+      "hasOwn",
+      "looseEqual",
+      "isSVGTag",
+      "NO",
+      "camelize",
+      "isBuiltInDirective",
+      "isReservedProp"
+    ],
+    "boolbase": [
+      "boolbase"
+    ],
+    "node:crypto": [
+      "createHash",
+      "crypto",
+      "randomUUID",
+      "randomFillSync"
+    ],
+    "acorn": [
+      "tokTypes",
+      "acorn",
+      "acornNamespace",
+      "TokenType",
+      "keywordTypes",
+      "TokContext",
+      "isIdentifierStart",
+      "isIdentifierChar"
+    ],
+    "internmap": [
+      "InternSet",
+      "InternMap"
+    ],
+    "crypto": [
+      "crypto"
+    ],
+    "@sindresorhus/is": [
+      "is",
+      "assert",
+      "isBuffer"
+    ],
+    "css-what": [
+      "SelectorType",
+      "parse",
+      "AttributeAction",
+      "isTraversalBase",
+      "isTraversal"
+    ],
+    "url": [
+      "fileURLToPath",
+      "Url"
+    ],
+    "brace-expansion": [
+      "expand"
+    ],
+    "path-scurry": [
+      "PathScurry",
+      "PathScurryDarwin",
+      "PathScurryPosix",
+      "PathScurryWin32"
+    ],
+    "lru-cache": [
+      "LRUCache"
+    ],
+    "os": [
+      "EOL",
+      "osType",
+      "require$$2$1"
+    ],
+    "node:os": [
+      "os",
+      "homedir",
+      "osType",
+      "platform"
+    ],
+    "node:module": [
+      "createRequire",
+      "module"
+    ],
+    "d3-dispatch": [
+      "dispatch"
+    ],
+    "node:process": [
+      "process",
+      "process$1"
+    ],
+    "stream": [
+      "stream",
+      "require$$1",
+      "Readable"
+    ],
+    "@webassemblyjs/helper-buffer": [
+      "overrideBytesInBuffer"
+    ],
+    "dom-serializer": [
+      "render",
+      "renderWithHtmlparser2",
+      "renderHTML"
+    ],
+    "node:http": [
+      "http",
+      "ServerResponse"
+    ],
+    "node:buffer": [
+      "Buffer"
+    ],
+    "ansi-regex": [
+      "ansiRegex"
+    ],
+    "strip-ansi": [
+      "stripAnsi"
+    ],
+    "domelementtype": [
+      "ElementType",
+      "isTagRaw"
+    ],
+    "preact/hooks": [
+      "useState",
+      "useLayoutEffect",
+      "useEffect",
+      "useCallback",
+      "useContext",
+      "useDebugValue",
+      "useId",
+      "useImperativeHandle",
+      "useMemo",
+      "useReducer",
+      "useRef",
+      "a",
+      "s",
+      "h",
+      "v",
+      "d",
+      "m",
+      "p",
+      "y",
+      "_"
+    ],
+    "node:perf_hooks": [
+      "performance"
+    ],
+    "iconv-lite": [
+      "iconv"
+    ],
+    "@xtuc/long": [
+      "Long"
+    ],
+    "parse5": [
+      "parseDocument",
+      "parseFragment",
+      "serializeOuter",
+      "html",
+      "Parser"
+    ],
+    "events": [
+      "EventEmitter",
+      "require$$0$3"
+    ],
+    "esrap": [
+      "esrap",
+      "print",
+      "Context"
+    ],
+    "entities/decode": [
+      "EntityDecoder",
+      "DecodingMode",
+      "htmlDecodeTree",
+      "xmlDecodeTree",
+      "fromCodePoint"
+    ],
+    "estraverse": [
+      "estraverse"
+    ],
+    "formdata-polyfill/esm.min.js": [
+      "FormData",
+      "formDataToBlob"
+    ],
+    "@kurkle/color": [
+      "Color"
+    ],
+    "d3-time": [
+      "timeYear",
+      "timeDay",
+      "utcYear",
+      "utcDay",
+      "timeMonth",
+      "timeWeek",
+      "timeHour",
+      "timeMinute",
+      "timeSecond",
+      "timeTicks",
+      "timeTickInterval",
+      "utcMonth",
+      "utcWeek",
+      "utcHour",
+      "utcMinute",
+      "utcSecond",
+      "utcTicks",
+      "utcTickInterval",
+      "timeSunday",
+      "timeMonday"
+    ],
+    "@vue/runtime-dom": [
+      "initCustomFormatter",
+      "warn",
+      "runtimeDom",
+      "registerRuntimeCompiler"
+    ],
+    "@webassemblyjs/helper-api-error": [
+      "CompileError"
+    ],
+    "@webassemblyjs/wasm-gen": [
+      "encodeNode",
+      "encodeU32"
+    ],
+    "d3-timer": [
+      "timer",
+      "timeout",
+      "now"
+    ],
+    "rw": [
+      "rw"
+    ],
+    "commander": [
+      "program"
+    ],
+    "parse5-htmlparser2-tree-adapter": [
+      "htmlparser2Adapter"
+    ],
+    "lowercase-keys": [
+      "lowercaseKeys"
+    ],
+    "d3-path": [
+      "Path",
+      "path"
+    ],
+    "node:worker_threads": [
+      "parentPort",
+      "workerData",
+      "MessageChannel",
+      "Worker",
+      "receiveMessageOnPort"
+    ],
+    "fs/promises": [
+      "stat",
+      "readdir",
+      "open",
+      "lstat",
+      "fsrealpath"
+    ],
+    "readdirp": [
+      "readdirp",
+      "ReaddirpStream"
+    ],
+    "mimic-response": [
+      "mimicResponse"
+    ],
+    "@keyv/serialize": [
+      "defaultDeserialize",
+      "defaultSerialize"
+    ],
+    "devalue": [
+      "devalue"
+    ],
+    "svelte/internal/client": [
+      "render_effect",
+      "get",
+      "noop"
+    ],
+    "locate-character": [
+      "getLocator"
+    ],
+    "@jridgewell/sourcemap-codec": [
+      "decode_mappings",
+      "encode"
+    ],
+    "esrap/languages/ts": [
+      "ts"
+    ],
+    "magic-string": [
+      "MagicString"
+    ],
+    "aria-query": [
+      "roles_map",
+      "elementRoles",
+      "aria"
+    ],
+    "axobject-query": [
+      "elementAXObjects",
+      "AXObjects",
+      "AXObjectRoles"
+    ],
+    "node:string_decoder": [
+      "StringDecoder"
+    ],
+    "esrecurse": [
+      "esrecurse"
+    ],
+    "node:https": [
+      "https"
+    ],
+    "node:zlib": [
+      "zlib"
+    ],
+    "fetch-blob/from.js": [
+      "File",
+      "Blob",
+      "fileFromSync",
+      "fileFrom",
+      "blobFromSync",
+      "blobFrom"
+    ],
+    "node:net": [
+      "isIP",
+      "net"
+    ],
+    "d3-time-format": [
+      "timeFormat",
+      "utcFormat"
+    ],
+    "d3-format": [
+      "format",
+      "formatSpecifier",
+      "formatPrefix",
+      "precisionFixed",
+      "precisionPrefix",
+      "precisionRound"
+    ],
+    "string-width": [
+      "stringWidth"
+    ],
+    "ansi-styles": [
+      "ansiStyles"
+    ],
+    "d3-drag": [
+      "dragDisable",
+      "dragEnable"
+    ],
+    "d3-transition": [
+      "interrupt"
+    ],
+    "uint8array-extras": [
+      "stringToUint8Array",
+      "concatUint8Arrays",
+      "stringToBase64"
+    ],
+    "node:diagnostics_channel": [
+      "diagnosticsChannel",
+      "tracingChannel",
+      "channel"
+    ],
+    "module": [
+      "createRequire"
+    ],
+    "emoji-regex": [
+      "emojiRegex"
+    ],
+    "child_process": [
+      "nodeSpawn",
+      "spawn"
+    ],
+    "@webassemblyjs/ieee754": [
+      "ieee754"
+    ],
+    "@webassemblyjs/utf8": [
+      "utf8"
+    ],
+    "@webassemblyjs/leb128": [
+      "decodeInt32",
+      "decodeUInt32",
+      "MAX_NUMBER_OF_BYTE_U32",
+      "decodeInt64",
+      "decodeUInt64",
+      "MAX_NUMBER_OF_BYTE_U64",
+      "leb"
+    ],
+    "@webassemblyjs/floating-point-hex-parser": [
+      "parseHexFloat"
+    ],
+    "@webassemblyjs/wasm-parser": [
+      "decode"
+    ],
+    "@webassemblyjs/wasm-gen/lib/encoder": [
+      "encodeU32"
+    ],
+    "@xtuc/ieee754": [
+      "write",
+      "read"
+    ],
+    "punycode": [
+      "punycode"
+    ],
+    "d3-quadtree": [
+      "quadtree"
+    ],
+    "node:assert/strict": [
+      "assert"
+    ],
+    "@hapi/hoek": [
+      "assert",
+      "escapeRegex"
+    ],
+    "cheerio-select": [
+      "select"
+    ],
+    "uvu/assert": [
+      "assert"
+    ],
+    "uvu": [
+      "suite"
+    ],
+    "@pkgr/core": [
+      "tryExtensions",
+      "findUp",
+      "cjsRequire",
+      "isPkgAvailable"
+    ],
+    "get-stream": [
+      "getStreamAsBuffer"
+    ],
+    "http-cache-semantics": [
+      "CachePolicy"
+    ],
+    "keyv": [
+      "Keyv"
+    ],
+    "normalize-url": [
+      "normalizeUrl"
+    ],
+    "responselike": [
+      "Response"
+    ],
+    "clsx": [
+      "_clsx"
+    ],
+    "svelte/reactivity": [
+      "MediaQuery"
+    ],
+    "@jridgewell/remapping": [
+      "remapping"
+    ],
+    "@sveltejs/acorn-typescript": [
+      "tsPlugin"
+    ],
+    "data-uri-to-buffer": [
+      "dataUriToBuffer"
+    ],
+    "fetch-blob": [
+      "Blob"
+    ],
+    "debug": [
+      "createDebug"
+    ],
+    "@eslint/object-schema": [
+      "ObjectSchema"
+    ],
+    "levn": [
+      "levn"
+    ],
+    "expo-random": [
+      "getRandomBytesAsync"
+    ],
+    "d3-scale": [
+      "scaleSequential"
+    ],
+    "gulp": [
+      "gulp"
+    ],
+    "gulp-mocha": [
+      "mocha"
+    ],
+    "gulp-eslint": [
+      "eslint"
+    ],
+    "minimist": [
+      "minimist"
+    ],
+    "gulp-git": [
+      "git"
+    ],
+    "gulp-bump": [
+      "bump"
+    ],
+    "gulp-filter": [
+      "filter"
+    ],
+    "gulp-tag-version": [
+      "tagVersion"
+    ],
+    "@vue/compiler-dom": [
+      "compile"
+    ],
+    "entities": [
+      "encodeXML",
+      "escapeAttribute",
+      "escapeText"
+    ],
+    "@isaacs/cliui": [
+      "cliui"
+    ],
+    "node:tls": [
+      "checkServerIdentity"
+    ],
+    "cacheable-lookup": [
+      "CacheableLookup"
+    ],
+    "http2-wrapper": [
+      "http2wrapper"
+    ],
+    "byte-counter": [
+      "byteLength"
+    ],
+    "chunk-data": [
+      "chunk"
+    ],
+    "cacheable-request": [
+      "CacheableRequest",
+      "CacheableCacheError"
+    ],
+    "decompress-response": [
+      "decompressResponse"
+    ],
+    "node:timers/promises": [
+      "delay"
+    ],
+    "vite": [
+      "defineConfig"
+    ],
+    "nth-check": [
+      "getNCheck"
+    ],
+    "rollup-plugin-node-resolve": [
+      "resolve"
+    ],
+    "rollup-plugin-commonjs": [
+      "commonjs"
+    ],
+    "eastasianwidth": [
+      "eastAsianWidth"
+    ],
+    "@vue/runtime-core": [
+      "warn",
+      "BaseTransitionPropsValidators",
+      "h",
+      "BaseTransition",
+      "assertNumber",
+      "getCurrentInstance",
+      "onBeforeUpdate",
+      "queuePostFlushCb",
+      "onMounted",
+      "watch",
+      "onUnmounted",
+      "Fragment",
+      "Static",
+      "camelize",
+      "callWithAsyncErrorHandling",
+      "nextTick",
+      "unref",
+      "createVNode",
+      "defineComponent",
+      "useTransitionState"
+    ],
+    "vue": [
+      "createVNode",
+      "ssrUtils",
+      "ssrContextKey",
+      "warn$2",
+      "Fragment",
+      "Static",
+      "Comment",
+      "Text",
+      "mergeProps",
+      "createApp",
+      "initDirectivesForSSR"
+    ],
+    "@vue/reactivity": [
+      "pauseTracking",
+      "resetTracking",
+      "isRef",
+      "toRaw",
+      "traverse",
+      "watch$1",
+      "shallowRef",
+      "readonly",
+      "isReactive",
+      "ref",
+      "isShallow",
+      "isReadonly",
+      "shallowReadArray",
+      "toReadonly",
+      "toReactive",
+      "shallowReadonly",
+      "track",
+      "reactive",
+      "customRef",
+      "shallowReactive"
+    ],
+    "@vue/compiler-core": [
+      "registerRuntimeHelpers",
+      "createSimpleExpression",
+      "createCompilerError",
+      "createObjectProperty",
+      "getConstantType",
+      "createCallExpression",
+      "TO_DISPLAY_STRING",
+      "transformModel$1",
+      "findProp",
+      "hasDynamicKeyVBind",
+      "findDir",
+      "isStaticArgOf",
+      "transformOn$1",
+      "isStaticExp",
+      "createCompoundExpression",
+      "checkCompatEnabled",
+      "isCommentOrWhitespace",
+      "noopDirectiveTransform",
+      "baseCompile",
+      "baseParse"
+    ],
+    "#ansi-styles": [
+      "ansiStyles"
+    ],
+    "#supports-color": [
+      "supportsColor"
+    ],
+    "node:tty": [
+      "tty"
+    ],
+    "robust-predicates": [
+      "orient2d"
+    ],
+    "three/addons/inspector/Extension.js": [
+      "Extension"
+    ],
+    "three/addons/inspector/ui/Tab.js": [
+      "Tab"
+    ],
+    "https://cdn.jsdelivr.net/npm/mp4box@0.5.3/+esm": [
+      "MP4Box"
+    ],
+    "preact-render-to-string": [
+      "renderToString"
+    ],
+    "buffer": [
+      "Buffer"
+    ],
+    "balanced-match": [
+      "balanced"
+    ],
+    "node:constants": [
+      "constants"
+    ],
+    "cross-spawn": [
+      "crossSpawn"
+    ],
+    "signal-exit": [
+      "onExit"
+    ],
+    "node:dns": [
+      "V4MAPPED",
+      "ADDRCONFIG",
+      "ALL",
+      "dnsPromises",
+      "dnsLookup"
+    ],
+    "rolldown/experimental": [
+      "reactRefreshWrapperPlugin"
+    ],
+    "node:readline": [
+      "readline"
+    ],
+    "delaunator": [
+      "Delaunator"
+    ],
+    "d3-dsv": [
+      "csvParse",
+      "dsvFormat",
+      "tsvParse"
+    ],
+    "@humanfs/core": [
+      "Hfs"
+    ],
+    "@humanwhocodes/retry": [
+      "Retrier"
+    ],
+    "css-select": [
+      "compileToken",
+      "prepareContext"
+    ],
+    "is-stream": [
+      "isReadableStream"
+    ],
+    "@sec-ant/readable-stream/ponyfill": [
+      "asyncIterator"
+    ],
+    "node:stream/promises": [
+      "finished"
+    ],
+    "whatwg-encoding": [
+      "labelToName"
+    ],
+    "@webassemblyjs/ast/lib/clone": [
+      "cloneNode"
+    ],
+    "@webassemblyjs/wasm-opt": [
+      "shrinkPaddedLEB128"
+    ],
+    "@webassemblyjs/helper-wasm-section": [
+      "resizeSectionByteSize",
+      "resizeSectionVecSize",
+      "createEmptySection",
+      "removeSections"
+    ],
+    "@webassemblyjs/helper-numbers": [
+      "parse32F",
+      "parse64F",
+      "parse32I",
+      "parse64I",
+      "parseU32",
+      "isNanLiteral",
+      "isInfLiteral"
+    ],
+    "d3-ease": [
+      "easeCubicInOut"
+    ],
+    "acorn-jsx": [
+      "jsx"
+    ],
+    "eslint-visitor-keys": [
+      "VisitorKeys"
+    ]
+  },
   "globals": {
     "Array": [
       "isArray",
