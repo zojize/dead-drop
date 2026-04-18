@@ -159,14 +159,26 @@ export function mixHash(hash: number, byte: number): number {
   return hash >>> 0
 }
 
-/** Derive a deterministic name from hash + index. */
+/** Derive a deterministic minifier-style name from hash + index (e.g. a, b, aa, bc). */
 export function nameFromHash(hash: number, index: number): string {
   const ALPHA = 'abcdefghijklmnopqrstuvwxyz'
   const h = mixHash(hash, index)
-  const a = ALPHA[h % 26]
-  const b = ALPHA[(h >>> 8) % 26]
-  const c = ALPHA[(h >>> 16) % 26]
-  return `_${a}${b}${c}`
+  // 702 possible names: a–z (26) + aa–zz (676), excluding 2-letter JS reserved words
+  const total = 26 + 26 * 26
+  let slot = h % total
+  // Skip 2-letter JS reserved words: 'do' (slot 118), 'if' (239), 'in' (247)
+  if (slot >= 26) {
+    const s = slot - 26
+    const two = ALPHA[Math.floor(s / 26)] + ALPHA[s % 26]
+    if (two === 'do' || two === 'if' || two === 'in') {
+      slot = (slot + 1) % total
+    }
+  }
+  if (slot < 26) {
+    return ALPHA[slot]
+  }
+  const s = slot - 26
+  return ALPHA[Math.floor(s / 26)] + ALPHA[s % 26]
 }
 
 /** Derive a label name from hash. */
