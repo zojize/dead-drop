@@ -469,6 +469,8 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
           out.write(0, bits)
           hash = mixHash(hash, 0)
         }
+        if (ctx.blockDepth === 0 && item.node.type !== 'ImportDeclaration')
+          ctx.hasLeftImportRegion = true
         pushStmtChildren(item.node)
         break
       }

@@ -70,6 +70,7 @@ export interface EncodingContext {
   scopeBucket: ScopeBucket
   prevStmtKey: string
   hasExportDefault: boolean
+  hasLeftImportRegion: boolean
 }
 
 export function initialContext(): EncodingContext {
@@ -86,6 +87,7 @@ export function initialContext(): EncodingContext {
     scopeBucket: 'top-level',
     prevStmtKey: '<START>',
     hasExportDefault: false,
+    hasLeftImportRegion: false,
   }
 }
 
@@ -508,6 +510,10 @@ export function filterCandidates(ctx: EncodingContext): Candidate[] {
 
     // Only one export default per module
     if (c.nodeType === 'ExportDefaultDeclaration' && ctx.hasExportDefault)
+      return false
+
+    // Imports only appear before any non-import statement
+    if (c.nodeType === 'ImportDeclaration' && ctx.hasLeftImportRegion)
       return false
 
     // Context-gated entries
