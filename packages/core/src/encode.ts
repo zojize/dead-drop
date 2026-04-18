@@ -536,6 +536,8 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
     const value = readBits(bits)
     const c = table[value]
     hash = mixHash(hash, value)
+    if (ctx.blockDepth === 0 && c.nodeType !== 'ImportDeclaration')
+      ctx.hasLeftImportRegion = true
     return { stmt: buildStatement(c), candidate: c }
   }
 
