@@ -198,7 +198,7 @@ return bytes[4 .. 4+length]
 bun install
 bun run lint          # lint (uses @antfu/eslint-config)
 bun run lint:fix      # auto-fix lint issues
-bun run test          # 66 tests including fuzz, ordering quality, and randomization invariant
+bun run test          # 67 tests including fuzz, ordering quality, and randomization invariant
 bun run typecheck     # typecheck all packages
 bun run knip          # check for unused deps/exports
 ```
