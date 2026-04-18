@@ -196,7 +196,7 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         for (let i = (node as t.ObjectExpression).properties.length - 1; i >= 0; i--) {
           const p = (node as t.ObjectExpression).properties[i] as t.ObjectProperty
           work.push({ kind: 'expr', node: p.value, depth: d })
-          work.push({ kind: 'expr', node: p.key, depth: d })
+          // key is now a cosmetic short identifier — not structural
         }
         break
       case 'SequenceExpression':
@@ -347,8 +347,7 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
           work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
           work.push({ kind: 'block', stmts: n.cases[i].consequent })
           work.push({ kind: 'bucket-enter', bucket: deriveScopeBucket('SwitchCase', 'consequent') })
-          if (n.cases[i].test)
-            work.push({ kind: 'expr', node: n.cases[i].test!, depth: 0 })
+          // case test is now a cosmetic small integer — not structural
         }
         work.push({ kind: 'expr', node: n.discriminant, depth: 0 })
         break
@@ -385,7 +384,9 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         const n = node as t.ExportNamedDeclaration
         if (n.declaration?.type === 'VariableDeclaration') {
           const vd = n.declaration as t.VariableDeclaration
-          const name = nameFromHash(hash, ctx.scope.length)
+          let name = nameFromHash(hash, ctx.scope.length)
+          while (ctx.scope.includes(name))
+            name = `${name}${ctx.scope.length}`
           ctx.scope.push(name)
           work.push({ kind: 'var-decl', name, initNode: vd.declarations[0].init!, depth: 0 })
         }

@@ -246,10 +246,9 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         return t.arrayExpression(Array.from({ length: c.variant }, () => child()))
       case 'ObjectExpression': {
         const pairs = Array.from({ length: c.variant }, () => {
-          const k = child()
+          const key = t.identifier(cosmeticProp())
           const v = child()
-          const isc = !t.isIdentifier(k) && !t.isStringLiteral(k) && !t.isNumericLiteral(k)
-          return t.objectProperty(k, v, isc)
+          return t.objectProperty(key, v, false)
         })
         return t.objectExpression(pairs)
       }
@@ -388,8 +387,8 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
       }
       case 'SwitchStatement': {
         const disc = buildExpr(0).node
-        const cases = Array.from({ length: c.variant }, () => {
-          const test = buildExpr(0).node
+        const cases = Array.from({ length: c.variant }, (_, i) => {
+          const test = t.numericLiteral(i)
           const body = buildBlock('SwitchCase', 'consequent')
           return t.switchCase(test, body)
         })
@@ -458,7 +457,9 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         // variants 0..2: variable (var/let/const)
         if (c.variant >= 0 && c.variant <= 2) {
           const kind = VAR_KINDS[c.variant]
-          const name = nameFromHash(hash, ctx.scope.length)
+          let name = nameFromHash(hash, ctx.scope.length)
+          while (ctx.scope.includes(name))
+            name = `${name}${ctx.scope.length}`
           ctx.scope.push(name)
           const { node: init, candidate: initC } = buildExpr(0)
           const inferredType = initC ? inferTypeFromKey(initC.key) : 'any'
