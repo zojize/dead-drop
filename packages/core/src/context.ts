@@ -35,8 +35,11 @@ export interface ScopeEntry {
   type: ScopeType
 }
 
-/** Max expression nesting depth before forcing leaf-only candidates. */
-export const MAX_EXPR_DEPTH = Infinity // default — override via createCodec for browser use
+/** Max expression nesting depth before forcing leaf-only candidates.
+ * Default 1 — leaf-only expressions produce many short statements, making
+ * output resemble a real JS module with imports, declarations, and exports.
+ * Override via createCodec for deeper expression trees. */
+export const MAX_EXPR_DEPTH = 1
 
 export type ScopeBucket = 'top-level' | 'function-body' | 'loop-body' | 'block-body'
 
@@ -66,6 +69,7 @@ export interface EncodingContext {
   blockDepth: number
   scopeBucket: ScopeBucket
   prevStmtKey: string
+  hasExportDefault: boolean
 }
 
 export function initialContext(): EncodingContext {
@@ -81,6 +85,7 @@ export function initialContext(): EncodingContext {
     blockDepth: 0,
     scopeBucket: 'top-level',
     prevStmtKey: '<START>',
+    hasExportDefault: false,
   }
 }
 
@@ -272,18 +277,18 @@ function buildAllCandidates(): Candidate[] {
   // Conditional (weight 0.8, 3 children)
   c.push({ key: 'ConditionalExpression:0', nodeType: 'ConditionalExpression', variant: 0, children: ['expr', 'expr', 'expr'], weight: lookupWeight('ConditionalExpression:0'), isStatement: false })
 
-  // Call/New expression — arg count as variant (type-gated: only when scope has callable/constructable)
-  for (let n = 0; n < 19; n++) {
+  // Call/New expression — arg count 0-4 (covers most real-world calls)
+  for (let n = 0; n <= 4; n++) {
     const ch: SlotKind[] = ['expr', ...Array.from<SlotKind>({ length: n }).fill('expr')]
     c.push({ key: `CallExpression:${n}`, nodeType: 'CallExpression', variant: n, children: ch, weight: lookupWeight(`CallExpression:${n}`), isStatement: false })
   }
-  for (let n = 0; n < 16; n++) {
+  for (let n = 0; n <= 3; n++) {
     const ch: SlotKind[] = ['expr', ...Array.from<SlotKind>({ length: n }).fill('expr')]
     c.push({ key: `NewExpression:${n}`, nodeType: 'NewExpression', variant: n, children: ch, weight: lookupWeight(`NewExpression:${n}`), isStatement: false })
   }
 
-  // OptionalCallExpression — type-gated: expr?.(args) throws if expr is non-null non-callable
-  for (let n = 0; n < 19; n++) {
+  // OptionalCallExpression — arg count 0-3
+  for (let n = 0; n <= 3; n++) {
     const ch: SlotKind[] = ['expr', ...Array.from<SlotKind>({ length: n }).fill('expr')]
     c.push({ key: `OptionalCallExpression:${n}`, nodeType: 'OptionalCallExpression', variant: n, children: ch, weight: lookupWeight(`OptionalCallExpression:${n}`), isStatement: false })
   }
@@ -295,11 +300,11 @@ function buildAllCandidates(): Candidate[] {
   c.push({ key: 'OptionalMemberExpression:0', nodeType: 'OptionalMemberExpression', variant: 0, children: ['expr'], weight: lookupWeight('OptionalMemberExpression:0'), isStatement: false })
   c.push({ key: 'OptionalMemberExpression:1', nodeType: 'OptionalMemberExpression', variant: 1, children: ['expr', 'expr'], weight: lookupWeight('OptionalMemberExpression:1'), isStatement: false })
 
-  // Array/Object — element/prop count (extended to 0-31 for more unique candidates)
-  for (let n = 0; n < 32; n++) {
+  // Array/Object — element/prop count 0-4 (covers most real-world literals)
+  for (let n = 0; n <= 4; n++) {
     c.push({ key: `ArrayExpression:${n}`, nodeType: 'ArrayExpression', variant: n, children: Array.from<SlotKind>({ length: n }).fill('expr'), weight: lookupWeight(`ArrayExpression:${n}`), isStatement: false })
   }
-  for (let n = 0; n < 32; n++) {
+  for (let n = 0; n <= 4; n++) {
     const ch: SlotKind[] = []
     for (let j = 0; j < n; j++) {
       ch.push('expr', 'expr')
@@ -307,25 +312,25 @@ function buildAllCandidates(): Candidate[] {
     c.push({ key: `ObjectExpression:${n}`, nodeType: 'ObjectExpression', variant: n, children: ch, weight: lookupWeight(`ObjectExpression:${n}`), isStatement: false })
   }
 
-  // Sequence expression (count 2-29, extended range)
-  for (let n = 2; n <= 29; n++) {
+  // Sequence expression — count 2-4 (rare in real code, small variants only)
+  for (let n = 2; n <= 4; n++) {
     c.push({ key: `SequenceExpression:${n - 2}`, nodeType: 'SequenceExpression', variant: n - 2, children: Array.from<SlotKind>({ length: n }).fill('expr'), weight: lookupWeight(`SequenceExpression:${n - 2}`), isStatement: false })
   }
 
-  // Template literals (extended to 0-16)
-  for (let n = 0; n < 17; n++) {
+  // Template literals — 0-3 interpolations
+  for (let n = 0; n <= 3; n++) {
     c.push({ key: `TemplateLiteral:${n}`, nodeType: 'TemplateLiteral', variant: n, children: Array.from<SlotKind>({ length: n }).fill('expr'), weight: lookupWeight(`TemplateLiteral:${n}`), isStatement: false })
   }
-  // TaggedTemplateExpression (type-gated: tag must be callable)
-  for (let n = 0; n < 8; n++) {
+  // TaggedTemplateExpression — 0-2 interpolations
+  for (let n = 0; n <= 2; n++) {
     c.push({ key: `TaggedTemplateExpression:${n}`, nodeType: 'TaggedTemplateExpression', variant: n, children: ['expr', ...Array.from<SlotKind>({ length: n }).fill('expr')], weight: lookupWeight(`TaggedTemplateExpression:${n}`), isStatement: false })
   }
 
-  // Arrow/Function expression — param count (extended to 0-23)
-  for (let n = 0; n < 24; n++) {
+  // Arrow/Function expression — param count 0-3 (covers most functions)
+  for (let n = 0; n <= 3; n++) {
     c.push({ key: `ArrowFunctionExpression:${n}`, nodeType: 'ArrowFunctionExpression', variant: n, children: ['expr'], weight: lookupWeight(`ArrowFunctionExpression:${n}`), isStatement: false })
   }
-  for (let n = 0; n < 24; n++) {
+  for (let n = 0; n <= 3; n++) {
     c.push({ key: `FunctionExpression:${n}`, nodeType: 'FunctionExpression', variant: n, children: ['expr'], weight: lookupWeight(`FunctionExpression:${n}`), isStatement: false })
   }
 
@@ -338,10 +343,11 @@ function buildAllCandidates(): Candidate[] {
 
   // ── Statement candidates (only available in statement context) ──
 
-  // ExpressionStatement is NOT a candidate — expression candidates in statement context
-  // are wrapped in ExpressionStatement automatically by the encoder's default case.
-  // Having ExpressionStatement:0 as a separate candidate creates ambiguity in the decoder
-  // (can't distinguish "expression selected directly" from "ExpressionStatement selected + inner expr").
+  // ExpressionStatement: when selected, the encoder calls buildExpr for a separate
+  // expression-level table lookup. Expressions are excluded from the statement table
+  // so there's no ambiguity — ExpressionStatement:0 is the only way to get an expression
+  // in statement context.
+  c.push({ key: 'ExpressionStatement:0', nodeType: 'ExpressionStatement', variant: 0, children: ['expr'], weight: lookupWeight('ExpressionStatement:0'), isStatement: true })
 
   // VariableDeclaration: var/let/const (weight 2)
   c.push({ key: 'VariableDeclaration:0', nodeType: 'VariableDeclaration', variant: 0, children: ['expr'], weight: lookupWeight('VariableDeclaration:0'), isStatement: true }) // var
@@ -355,18 +361,13 @@ function buildAllCandidates(): Candidate[] {
   // WhileStatement (weight 1)
   c.push({ key: 'WhileStatement:0', nodeType: 'WhileStatement', variant: 0, children: ['expr', 'block'], weight: lookupWeight('WhileStatement:0'), isStatement: true })
 
-  // ForStatement × 8 null combos (weight 0.8)
-  for (let v = 0; v < 8; v++) {
-    const ch: SlotKind[] = []
-    if (v & 1)
-      ch.push('expr')
-    if (v & 2)
-      ch.push('expr')
-    if (v & 4)
-      ch.push('expr')
-    ch.push('block')
-    c.push({ key: `ForStatement:${v}`, nodeType: 'ForStatement', variant: v, children: ch, weight: lookupWeight(`ForStatement:${v}`), isStatement: true })
-  }
+  // ForStatement — only the 3 most common variants to limit bit cost
+  // variant 7: for(init;test;update) — the standard form
+  c.push({ key: 'ForStatement:7', nodeType: 'ForStatement', variant: 7, children: ['expr', 'expr', 'expr', 'block'], weight: lookupWeight('ForStatement:7'), isStatement: true })
+  // variant 3: for(init;test;) — no update
+  c.push({ key: 'ForStatement:3', nodeType: 'ForStatement', variant: 3, children: ['expr', 'expr', 'block'], weight: lookupWeight('ForStatement:3'), isStatement: true })
+  // variant 6: for(;test;update) — no init
+  c.push({ key: 'ForStatement:6', nodeType: 'ForStatement', variant: 6, children: ['expr', 'expr', 'block'], weight: lookupWeight('ForStatement:6'), isStatement: true })
 
   // DoWhileStatement (weight 0.8)
   c.push({ key: 'DoWhileStatement:0', nodeType: 'DoWhileStatement', variant: 0, children: ['expr', 'block'], weight: lookupWeight('DoWhileStatement:0'), isStatement: true })
@@ -377,8 +378,9 @@ function buildAllCandidates(): Candidate[] {
   // TryStatement (weight 0.5)
   c.push({ key: 'TryStatement:0', nodeType: 'TryStatement', variant: 0, children: ['block', 'block'], weight: lookupWeight('TryStatement:0'), isStatement: true })
 
-  // SwitchStatement × case counts 0-15 (weight varies)
-  for (let n = 0; n <= 15; n++) {
+  // SwitchStatement × case counts 0-2 (capped — higher counts consume too many bits
+  // and dominate the output when selected from a bijective table)
+  for (let n = 0; n <= 2; n++) {
     const ch: SlotKind[] = ['expr']
     for (let j = 0; j < n; j++) {
       ch.push('expr', 'block')
@@ -475,9 +477,12 @@ export function filterCandidates(ctx: EncodingContext): Candidate[] {
     if (ctx.expressionOnly && c.isStatement)
       return false
 
-    // Statement context: BOTH statements and expressions are available.
-    // Expressions are implicitly wrapped in ExpressionStatement by the encoder.
-    // The decoder identifies them from the ExpressionStatement's inner expression.
+    // Statement context: only statements (including ExpressionStatement:0).
+    // Raw expression candidates are excluded — they're selected via a separate
+    // expression table when ExpressionStatement:0 is chosen. This gives statements
+    // proper probability (~1/30) instead of being drowned by ~200 expression candidates.
+    if (!ctx.expressionOnly && !c.isStatement)
+      return false
 
     // Top-level-only candidates: imports and exports are legal only at program root
     if (
@@ -488,6 +493,10 @@ export function filterCandidates(ctx: EncodingContext): Candidate[] {
     ) {
       return false
     }
+
+    // Only one export default per module
+    if (c.nodeType === 'ExportDefaultDeclaration' && ctx.hasExportDefault)
+      return false
 
     // Context-gated entries
     if (c.nodeType === 'ReturnStatement' && !ctx.inFunction)

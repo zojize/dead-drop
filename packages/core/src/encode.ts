@@ -47,6 +47,9 @@ const CORPUS_FUNC_NAMES = cosmeticData.functionNames
 const CORPUS_PROPS = cosmeticData.properties
 const PACKAGE_NAMES: string[] = (cosmeticData.packageNames) ?? []
 const IMPORTED_NAMES: string[] = (cosmeticData.importedNames) ?? []
+// Map of package name → its actual exports (from corpus). Used to pick
+// realistic import specifiers that match the chosen package.
+const PACKAGE_IMPORTS: Record<string, string[]> = (cosmeticData as { packageImports?: Record<string, string[]> }).packageImports ?? {}
 const VAR_KINDS = ['var', 'let', 'const'] as const
 
 export function encode(message: Uint8Array, options?: EncodeOptions): string {
@@ -115,16 +118,34 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
   function cosmeticFuncName(): string {
     return CORPUS_FUNC_NAMES[rng() % CORPUS_FUNC_NAMES.length]
   }
-  function cosmeticPackageName(h: number): string {
+  /** Pick a package that has at least `minExports` known imports in the corpus. */
+  function cosmeticPackageWithExports(minExports: number): { pkg: string, exports: string[] } {
     if (PACKAGE_NAMES.length === 0)
-      return 'pkg'
-    return PACKAGE_NAMES[h % PACKAGE_NAMES.length]
+      return { pkg: 'pkg', exports: [] }
+    // Try up to 8 random packages to find one with enough exports
+    for (let i = 0; i < 8; i++) {
+      const pkg = PACKAGE_NAMES[rng() % PACKAGE_NAMES.length]
+      const exports = PACKAGE_IMPORTS[pkg] ?? []
+      if (exports.length >= minExports)
+        return { pkg, exports }
+    }
+    // Fallback: any package, use global import names
+    const pkg = PACKAGE_NAMES[rng() % PACKAGE_NAMES.length]
+    return { pkg, exports: PACKAGE_IMPORTS[pkg] ?? IMPORTED_NAMES }
   }
   function cosmeticImportedName(h: number, offset: number): string {
+    // Uses hash so imports are deterministic from structural position
+    // (same structural spot → same name, allowing consistent references)
     if (IMPORTED_NAMES.length === 0)
       return nameFromHash(h, offset)
     const mixed = mixHash(h, offset)
     return IMPORTED_NAMES[mixed % IMPORTED_NAMES.length]
+  }
+  /** Pick an import name from a specific package's exports, with collision dedup externally. */
+  function importedFromPackage(exports: string[], idx: number): string {
+    if (exports.length === 0)
+      return cosmeticImportedName(0, idx)
+    return exports[(rng() + idx) % exports.length]
   }
   function cosmeticFlags(): string {
     const FLAGS = 'dgimsuy'
@@ -315,7 +336,9 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
     switch (c.nodeType) {
       case 'VariableDeclaration': {
         const kind = VAR_KINDS[c.variant]
-        const name = nameFromHash(hash, ctx.scope.length)
+        let name = nameFromHash(hash, ctx.scope.length)
+        while (ctx.scope.includes(name))
+          name = `${name}${ctx.scope.length}`
         ctx.scope.push(name)
         const { node: init, candidate: initC } = buildExpr(0)
         const inferredType = initC ? inferTypeFromKey(initC.key) : 'any'
@@ -380,14 +403,17 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
       case 'BreakStatement': return t.breakStatement()
       case 'ContinueStatement': return t.continueStatement()
       case 'ImportDeclaration': {
-        const pkg = cosmeticPackageName(hash)
         if (c.variant === 0) {
-          // side-effect
+          // side-effect — no names needed, just pick a package
+          const { pkg } = cosmeticPackageWithExports(0)
           return t.importDeclaration([], t.stringLiteral(pkg))
         }
         if (c.variant === 1) {
-          // default
-          const local = cosmeticImportedName(hash, 1)
+          // default — pick a package and use one of its real exports as local name
+          const { pkg, exports } = cosmeticPackageWithExports(1)
+          let local = exports.length > 0 ? importedFromPackage(exports, 0) : cosmeticImportedName(hash, 1)
+          while (ctx.scope.includes(local))
+            local = `${local}${ctx.scope.length}`
           ctx.scope.push(local)
           ctx.typedScope.push({ name: local, type: 'any' })
           return t.importDeclaration(
@@ -397,9 +423,26 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         }
         // named: variants 2..5 → 1..4 specifiers
         const count = c.variant - 1
+        const { pkg, exports } = cosmeticPackageWithExports(count)
+        const usedFromPkg = new Set<string>()
         const specifiers: t.ImportSpecifier[] = []
         for (let i = 0; i < count; i++) {
-          const local = cosmeticImportedName(hash, 10 + i)
+          let local: string
+          if (exports.length > 0) {
+            // Pick an unused export from this package's real imports
+            local = importedFromPackage(exports, i)
+            let tries = 0
+            while (usedFromPkg.has(local) && tries < 10) {
+              local = importedFromPackage(exports, i + tries + 1)
+              tries++
+            }
+          }
+          else {
+            local = cosmeticImportedName(hash, 10 + i)
+          }
+          usedFromPkg.add(local)
+          while (ctx.scope.includes(local))
+            local = `${local}${ctx.scope.length}`
           ctx.scope.push(local)
           ctx.typedScope.push({ name: local, type: 'any' })
           specifiers.push(t.importSpecifier(t.identifier(local), t.identifier(local)))
@@ -407,6 +450,7 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         return t.importDeclaration(specifiers, t.stringLiteral(pkg))
       }
       case 'ExportDefaultDeclaration': {
+        ctx.hasExportDefault = true
         const { node: inner } = buildExpr(0)
         return t.exportDefaultDeclaration(inner)
       }
@@ -425,7 +469,9 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         // variants 10..13: function with param count 0..3
         if (c.variant >= 10 && c.variant <= 13) {
           const paramCount = c.variant - 10
-          const fnName = cosmeticFuncName()
+          let fnName = cosmeticFuncName()
+          while (ctx.scope.includes(fnName))
+            fnName = `${fnName}${ctx.scope.length}`
           const paramNames = Array.from({ length: paramCount }, (_, i) => nameFromHash(hash, 900 + i))
           // Enter function scope
           const savedScope = [...ctx.scope]
@@ -452,7 +498,9 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
         }
         return t.emptyStatement()
       }
-      default: return t.expressionStatement(buildExprNode(c, 0))
+      case 'ExpressionStatement':
+        return t.expressionStatement(buildExpr(0).node)
+      default: return t.emptyStatement()
     }
   }
 
