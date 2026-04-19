@@ -93,9 +93,14 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
   }
 
   function cosmeticIdent(): string {
+    // For structural Identifier:corpus, pick from corpus idents only (no scope).
+    // padLeafExpr uses this directly; buildExprNode for scope variants uses typedScope[i].name.
     if (ctx.typedScope.length > 0 && rng() % 3 !== 0) {
       return ctx.typedScope[rng() % ctx.typedScope.length].name
     }
+    return CORPUS_IDENTS[rng() % CORPUS_IDENTS.length]
+  }
+  function cosmeticCorpusIdent(): string {
     return CORPUS_IDENTS[rng() % CORPUS_IDENTS.length]
   }
   function cosmeticProp(): string {
@@ -198,7 +203,13 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
     switch (c.nodeType) {
       case 'NumericLiteral': return t.numericLiteral(cosmeticNumber())
       case 'StringLiteral': return t.stringLiteral(cosmeticString())
-      case 'Identifier': return t.identifier(cosmeticIdent())
+      case 'Identifier': {
+        // Identifier:scope:i — direct reference to typedScope[i]
+        if (c.variant >= 0 && c.variant < ctx.typedScope.length)
+          return t.identifier(ctx.typedScope[c.variant].name)
+        // Identifier:corpus (variant = -1) — pick from corpus idents
+        return t.identifier(cosmeticCorpusIdent())
+      }
       case 'BooleanLiteral': return t.booleanLiteral(c.variant === 1)
       case 'NullLiteral': return t.nullLiteral()
       case 'RegExpLiteral': return t.regExpLiteral(cosmeticTemplateRaw(), cosmeticFlags())
