@@ -191,7 +191,8 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
   }
 
   function buildExprNode(c: Candidate, depth: number, cosmeticChildren = false): t.Expression {
-    // At max depth, all children become cosmetic (non-data-carrying) — hard depth cap
+    // cosmeticChildren is now effectively dead for data-carrying nodes (filterCandidates
+    // ensures only leaves reach this point at maxExprDepth). Kept for safety.
     const child = cosmeticChildren ? padLeafExpr : () => buildExpr(depth + 1).node
 
     switch (c.nodeType) {
