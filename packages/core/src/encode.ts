@@ -17,6 +17,7 @@ import {
   MAX_EXPR_DEPTH,
   mixHash,
   nameFromHash,
+  stmtDepthFromHash,
   UNARY_OPS,
   UPDATE_OPS,
 } from './context'
@@ -92,7 +93,7 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
   }
 
   function cosmeticIdent(): string {
-    if (ctx.typedScope.length > 0 && rng() % 3 === 0) {
+    if (ctx.typedScope.length > 0 && rng() % 3 !== 0) {
       return ctx.typedScope[rng() % ctx.typedScope.length].name
     }
     return CORPUS_IDENTS[rng() % CORPUS_IDENTS.length]
@@ -538,7 +539,12 @@ export function encode(message: Uint8Array, options?: EncodeOptions): string {
     hash = mixHash(hash, value)
     if (ctx.blockDepth === 0 && c.nodeType !== 'ImportDeclaration')
       ctx.hasLeftImportRegion = true
-    return { stmt: buildStatement(c), candidate: c }
+    const savedMaxDepth = ctx.maxExprDepth
+    if (ctx.blockDepth === 0 && savedMaxDepth > 1)
+      ctx.maxExprDepth = stmtDepthFromHash(hash, savedMaxDepth)
+    const stmt = buildStatement(c)
+    ctx.maxExprDepth = savedMaxDepth
+    return { stmt, candidate: c }
   }
 
   const body: t.Statement[] = []

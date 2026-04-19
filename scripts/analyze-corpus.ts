@@ -453,6 +453,59 @@ const nested = {
   'global': toWeights(globalCounts),
 }
 
+// Compute identifier reference ratio: fraction of all expression nodes that are Identifiers.
+// Used to calibrate scope-conditional Identifier weight boost in filterCandidates.
+// Includes all expression node types as denominator (not binding-position Identifiers are also counted,
+// but they're a small fraction — most Identifiers in global counts are references).
+const EXPR_KEYS = new Set([
+  'NumericLiteral:0',
+  'StringLiteral:0',
+  'Identifier:0',
+  'BooleanLiteral:1',
+  'BooleanLiteral:0',
+  'NullLiteral:0',
+  'BigIntLiteral:0',
+  'ThisExpression:0',
+  'RegExpLiteral:0',
+  ...Array.from({ length: 16 }, (_, i) => `BinaryExpression:${i}`),
+  ...Array.from({ length: 3 }, (_, i) => `LogicalExpression:${i}`),
+  ...Array.from({ length: 16 }, (_, i) => `AssignmentExpression:${i}`),
+  ...Array.from({ length: 7 }, (_, i) => `UnaryExpression:${i}`),
+  ...Array.from({ length: 4 }, (_, i) => `UpdateExpression:${i}`),
+  'ConditionalExpression:0',
+  ...Array.from({ length: 19 }, (_, i) => `CallExpression:${i}`),
+  ...Array.from({ length: 19 }, (_, i) => `OptionalCallExpression:${i}`),
+  ...Array.from({ length: 16 }, (_, i) => `NewExpression:${i}`),
+  'MemberExpression:0',
+  'MemberExpression:1',
+  'OptionalMemberExpression:0',
+  'OptionalMemberExpression:1',
+  ...Array.from({ length: 32 }, (_, i) => `ArrayExpression:${i}`),
+  ...Array.from({ length: 32 }, (_, i) => `ObjectExpression:${i}`),
+  ...Array.from({ length: 30 }, (_, i) => `SequenceExpression:${i}`),
+  ...Array.from({ length: 17 }, (_, i) => `TemplateLiteral:${i}`),
+  ...Array.from({ length: 8 }, (_, i) => `TaggedTemplateExpression:${i}`),
+  ...Array.from({ length: 24 }, (_, i) => `ArrowFunctionExpression:${i}`),
+  ...Array.from({ length: 24 }, (_, i) => `FunctionExpression:${i}`),
+  'SpreadElement:0',
+  'ClassExpression:0',
+  'ClassExpression:1',
+  'AwaitExpression:0',
+])
+let totalExprNodes = 0
+let identNodes = 0
+for (const [key, count] of globalCounts.entries()) {
+  if (EXPR_KEYS.has(key)) {
+    totalExprNodes += count
+    if (key === 'Identifier:0')
+      identNodes += count
+  }
+}
+const identRefRatio = totalExprNodes > 0 ? identNodes / totalExprNodes : 0.4
+console.log(`\nIdentifier reference ratio: ${(identRefRatio * 100).toFixed(1)}% (${identNodes}/${totalExprNodes} expression nodes)`)
+// Store in global weights for use by filterCandidates
+nested.global.__identRefRatio__ = Math.round(identRefRatio * 1000) / 1000
+
 const outPath = join(process.cwd(), 'packages/core/src/corpus-weights.json')
 writeFileSync(outPath, `${JSON.stringify(nested, null, 2)}\n`)
 console.log(`\nWeights written to ${outPath}`)

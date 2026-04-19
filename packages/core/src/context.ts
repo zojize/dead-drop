@@ -35,10 +35,12 @@ export interface ScopeEntry {
   type: ScopeType
 }
 
-/** Max expression nesting depth before forcing leaf-only candidates.
+/**
+ * Max expression nesting depth before forcing leaf-only candidates.
  * Default 1 — leaf-only expressions produce many short statements, making
  * output resemble a real JS module with imports, declarations, and exports.
- * Override via createCodec for deeper expression trees. */
+ * Override via createCodec for deeper expression trees.
+ */
 export const MAX_EXPR_DEPTH = 1
 
 export type ScopeBucket = 'top-level' | 'function-body' | 'loop-body' | 'block-body'
@@ -181,6 +183,25 @@ export function nameFromHash(hash: number, index: number): string {
   }
   const s = slot - 26
   return ALPHA[Math.floor(s / 26)] + ALPHA[s % 26]
+}
+
+/**
+ * Derive a per-statement expression depth cap from the post-selection hash.
+ * Only meaningful when globalMax > 1 (non-default maxExprDepth).
+ * Distribution: 50% → 1, 25% → 2, 12.5% → 3, 12.5% → globalMax.
+ * Encoder and decoder call this with the same post-mixHash value so they agree.
+ */
+export function stmtDepthFromHash(hash: number, globalMax: number): number {
+  if (globalMax <= 1)
+    return globalMax
+  const r = (hash >>> 8) & 0xFF
+  if (r < 128)
+    return 1
+  if (r < 192)
+    return Math.min(2, globalMax)
+  if (r < 224)
+    return Math.min(3, globalMax)
+  return globalMax
 }
 
 /** Derive a label name from hash. */
