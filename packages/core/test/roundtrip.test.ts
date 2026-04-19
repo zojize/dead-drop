@@ -328,7 +328,178 @@ describe('import candidates', () => {
   })
 })
 
+/**
+ * Walk a JS string and return the maximum expression nesting depth (0-based).
+ * Mirrors the encoder: depth 0 = direct expression child of a statement,
+ * +1 for each expression child recursion. Cosmetic (non-structural) children
+ * like object keys, switch-case tests, and label names are not counted.
+ */
+function measureMaxExprDepth(js: string): number {
+  const ast = parse(js, { sourceType: 'module', plugins: [['optionalChainingAssign', { version: '2023-07' }]] })
+  let max = -1
+
+  function e(node: any, d: number): void {
+    if (!node || typeof node !== 'object')
+      return
+    if (d > max)
+      max = d
+    const c = d + 1
+    switch (node.type) {
+      case 'BinaryExpression':
+      case 'LogicalExpression':
+        e(node.left, c)
+        e(node.right, c)
+        break
+      case 'AssignmentExpression':
+        e(node.right, c)
+        break
+      case 'UnaryExpression':
+        e(node.argument, c)
+        break
+      case 'ConditionalExpression':
+        e(node.test, c)
+        e(node.consequent, c)
+        e(node.alternate, c)
+        break
+      case 'CallExpression':
+      case 'OptionalCallExpression':
+        e(node.callee, c)
+        node.arguments.forEach((a: any) => e(a, c))
+        break
+      case 'NewExpression':
+        e(node.callee, c)
+        node.arguments.forEach((a: any) => e(a, c))
+        break
+      case 'MemberExpression':
+      case 'OptionalMemberExpression':
+        e(node.object, c)
+        if (node.computed)
+          e(node.property, c)
+        break
+      case 'ArrayExpression':
+        node.elements.forEach((el: any) => el && e(el, c))
+        break
+      case 'ObjectExpression':
+        node.properties.forEach((p: any) => e(p.value, c))
+        break
+      case 'SequenceExpression':
+        node.expressions.forEach((ex: any) => e(ex, c))
+        break
+      case 'TemplateLiteral':
+        node.expressions.forEach((ex: any) => e(ex, c))
+        break
+      case 'TaggedTemplateExpression':
+        e(node.tag, c)
+        node.quasi.expressions.forEach((ex: any) => e(ex, c))
+        break
+      case 'ArrowFunctionExpression': {
+        const body = node.body.type === 'BlockStatement' ? node.body.body[0]?.argument : node.body
+        if (body)
+          e(body, c)
+        break
+      }
+      case 'FunctionExpression': {
+        const ret = node.body?.body?.[0]
+        if (ret?.type === 'ReturnStatement' && ret.argument)
+          e(ret.argument, c)
+        break
+      }
+      case 'AwaitExpression':
+        e(node.argument, c)
+        break
+      case 'ClassExpression':
+        if (node.superClass)
+          e(node.superClass, c)
+        break
+    }
+  }
+
+  function s(node: any): void {
+    if (!node)
+      return
+    switch (node.type) {
+      case 'ExpressionStatement':
+        e(node.expression, 0)
+        break
+      case 'VariableDeclaration':
+        node.declarations.forEach((d: any) => d.init && e(d.init, 0))
+        break
+      case 'ExportDefaultDeclaration':
+        e(node.declaration, 0)
+        break
+      case 'ExportNamedDeclaration':
+        if (node.declaration?.type === 'VariableDeclaration')
+          node.declaration.declarations.forEach((d: any) => d.init && e(d.init, 0))
+        else if (node.declaration?.type === 'FunctionDeclaration')
+          node.declaration.body?.body.forEach(s)
+        break
+      case 'IfStatement':
+        e(node.test, 0)
+        s(node.consequent)
+        s(node.alternate)
+        break
+      case 'WhileStatement':
+      case 'DoWhileStatement':
+        e(node.test, 0)
+        s(node.body)
+        break
+      case 'ForStatement':
+        if (node.init)
+          e(node.init.type === 'VariableDeclaration' ? node.init.declarations[0]?.init : node.init, 0)
+        if (node.test)
+          e(node.test, 0)
+        if (node.update)
+          e(node.update, 0)
+        s(node.body)
+        break
+      case 'BlockStatement':
+        node.body.forEach(s)
+        break
+      case 'ReturnStatement':
+        if (node.argument)
+          e(node.argument, 0)
+        break
+      case 'ThrowStatement':
+        e(node.argument, 0)
+        break
+      case 'SwitchStatement':
+        e(node.discriminant, 0)
+        node.cases.forEach((c: any) => c.consequent.forEach(s))
+        break
+      case 'LabeledStatement':
+        s(node.body)
+        break
+      case 'TryStatement':
+        s(node.block)
+        if (node.handler)
+          s(node.handler.body)
+        if (node.finalizer)
+          s(node.finalizer)
+        break
+    }
+  }
+
+  ast.program.body.forEach(s)
+  return max
+}
+
 describe('maxExprDepth', () => {
+  it('output expression depth does not exceed maxExprDepth', () => {
+    const cases: Array<[Uint8Array, number]> = [
+      [new TextEncoder().encode('hello world'), 1],
+      [new TextEncoder().encode('the quick brown fox'), 3],
+      [new Uint8Array([0xDE, 0xAD, 0xBE, 0xEF, 0x12, 0x34]), 5],
+      [new Uint8Array(Array.from({ length: 20 }, (_, i) => i * 13)), 7],
+      [new TextEncoder().encode('https://example.com/api/v2'), 10],
+      [new Uint8Array(Array.from({ length: 30 }, (_, i) => (i * 37) & 0xFF)), 20],
+    ]
+    for (const [data, maxDepth] of cases) {
+      const js = encode(data, { maxExprDepth: maxDepth })
+      expect(measureMaxExprDepth(js)).toBeLessThanOrEqual(maxDepth)
+      expect(Array.from(decode(js, { maxExprDepth: maxDepth }))).toEqual(Array.from(data))
+    }
+  })
+
   it('round-trips with depth 10', () => {
     for (let i = 0; i < 50; i++) {
       const len = Math.floor(Math.random() * 20) + 1
@@ -440,5 +611,6 @@ describe('maxExprDepth', () => {
     const js = encode(data, { maxExprDepth: 64 })
     const out = decode(js, { maxExprDepth: 64 })
     expect(Array.from(out)).toEqual(Array.from(data))
+    expect(measureMaxExprDepth(js)).toBeLessThanOrEqual(64)
   })
 })

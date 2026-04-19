@@ -499,14 +499,12 @@ export function filterCandidates(ctx: EncodingContext): Candidate[] {
         return false
     }
 
-    // Expression depth limit: filter out non-leaf EXPRESSIONS when deep.
-    // Statement candidates are NOT affected (they always start a fresh expr tree at depth 0).
-    // Expression candidates with children are filtered → only leaves remain.
-    // We have ~12 leaf expressions + ~200 total → always >= 12 unique after filter.
-    // But we need 256! So also keep all STATEMENT candidates (non-expression-only context).
-    // In expression-only context, we need >= 256 leaves — we DON'T have that.
-    // So for expression-only at max depth: keep the non-leaf candidates but with tiny weight.
-    // The weight scaling already handles this (10000x leaf bias).
+    // Expression depth hard cap: at max depth, only leaf expressions are allowed.
+    // Eliminates the need for cosmetic (padLeaf) children in the encoder and ensures
+    // the generated AST never exceeds maxExprDepth. The decoder already stops recursing
+    // at depth >= maxExprDepth — this filter makes the encoder consistent with it.
+    if (ctx.expressionOnly && ctx.maxExprDepth < Infinity && ctx.exprDepth >= ctx.maxExprDepth && c.children.length > 0)
+      return false
 
     // Expression-only context: only expressions
     if (ctx.expressionOnly && c.isStatement)
