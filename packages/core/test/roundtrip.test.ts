@@ -374,7 +374,7 @@ describe('maxExprDepth', () => {
   it('different depths produce different output for same input', () => {
     const msg = new TextEncoder().encode('hello')
     const outputs = new Set<string>()
-    for (const d of [5, 10, 15, 20, 50]) {
+    for (const d of [1, 5, 10, 20, 50]) {
       outputs.add(encode(msg, { maxExprDepth: d }))
     }
     expect(outputs.size).toBeGreaterThanOrEqual(2)

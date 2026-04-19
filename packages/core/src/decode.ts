@@ -1,7 +1,7 @@
 import type * as t from '@babel/types'
 import type { EncodingContext, ScopeBucket } from './context'
 import { parse } from '@babel/parser'
-import { ASSIGN_OPS, bigramKey, BINARY_OPS, bitWidth, BitWriter, buildReverseTable, buildTable, deriveScopeBucket, filterCandidates, inferTypeFromKey, initialContext, LOGICAL_OPS, MAX_EXPR_DEPTH, mixHash, nameFromHash, UNARY_OPS } from './context'
+import { ASSIGN_OPS, bigramKey, BINARY_OPS, bitWidth, BitWriter, buildReverseTable, buildTable, deriveScopeBucket, filterCandidates, inferTypeFromKey, initialContext, LOGICAL_OPS, MAX_EXPR_DEPTH, mixHash, nameFromHash, stmtDepthFromHash, UNARY_OPS } from './context'
 
 export interface DecodeOptions {
   /** Structural key — must match the key used during encoding. */
@@ -23,6 +23,7 @@ type WorkItem
     | { kind: 'scope-push', name: string, type: string }
     | { kind: 'bucket-enter', bucket: ScopeBucket }
     | { kind: 'bucket-exit', prev: ScopeBucket }
+    | { kind: 'max-depth-restore', saved: number }
 
 export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
   const ast = parse(jsSource, {
@@ -471,6 +472,11 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         }
         if (ctx.blockDepth === 0 && item.node.type !== 'ImportDeclaration')
           ctx.hasLeftImportRegion = true
+        if (ctx.blockDepth === 0 && ctx.maxExprDepth > 1) {
+          const cap = stmtDepthFromHash(hash, ctx.maxExprDepth)
+          work.push({ kind: 'max-depth-restore', saved: ctx.maxExprDepth })
+          ctx.maxExprDepth = cap
+        }
         pushStmtChildren(item.node)
         break
       }
@@ -526,6 +532,10 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
 
       case 'bucket-exit':
         ctx.scopeBucket = item.prev
+        break
+
+      case 'max-depth-restore':
+        ctx.maxExprDepth = item.saved
         break
 
       case 'var-decl': {
