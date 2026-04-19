@@ -43,7 +43,16 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
     switch (node.type) {
       case 'NumericLiteral': return 'NumericLiteral:0'
       case 'StringLiteral': return 'StringLiteral:0'
-      case 'Identifier': return 'Identifier:0'
+      case 'Identifier': {
+        // Determine if this identifier references a scope variable (Identifier:scope:i)
+        // or a corpus ident (Identifier:corpus). Both encoder and decoder track typedScope
+        // in identical order, so findIndex gives the same variant index.
+        const name = (node as t.Identifier).name
+        const idx = ctx.typedScope.findIndex(e => e.name === name)
+        if (idx >= 0)
+          return `Identifier:scope:${idx}`
+        return 'Identifier:corpus'
+      }
       case 'BooleanLiteral': return `BooleanLiteral:${node.value ? 1 : 0}`
       case 'NullLiteral': return 'NullLiteral:0'
       case 'ThisExpression': return 'ThisExpression:0'
@@ -267,11 +276,14 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         break
       case 'VariableDeclaration': {
         const n = node as t.VariableDeclaration
-        let name = nameFromHash(hash, ctx.scope.length)
-        while (ctx.scope.includes(name))
-          name = `${name}${ctx.scope.length}`
-        ctx.scope.push(name)
-        work.push({ kind: 'var-decl', name, initNode: n.declarations[0].init!, depth: 0 })
+        let genName = nameFromHash(hash, ctx.scope.length)
+        while (ctx.scope.includes(genName))
+          genName = `${genName}${ctx.scope.length}`
+        ctx.scope.push(genName)
+        // Use the actual AST name for typedScope so Identifier:scope:i lookup works
+        // regardless of cosmetic renaming. genName is used only for dedup tracking.
+        const actualName = (n.declarations[0].id as t.Identifier).name
+        work.push({ kind: 'var-decl', name: actualName, initNode: n.declarations[0].init!, depth: 0 })
         break
       }
       case 'IfStatement': {
@@ -385,11 +397,12 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         const n = node as t.ExportNamedDeclaration
         if (n.declaration?.type === 'VariableDeclaration') {
           const vd = n.declaration as t.VariableDeclaration
-          let name = nameFromHash(hash, ctx.scope.length)
-          while (ctx.scope.includes(name))
-            name = `${name}${ctx.scope.length}`
-          ctx.scope.push(name)
-          work.push({ kind: 'var-decl', name, initNode: vd.declarations[0].init!, depth: 0 })
+          let genName = nameFromHash(hash, ctx.scope.length)
+          while (ctx.scope.includes(genName))
+            genName = `${genName}${ctx.scope.length}`
+          ctx.scope.push(genName)
+          const actualVdName = (vd.declarations[0].id as t.Identifier).name
+          work.push({ kind: 'var-decl', name: actualVdName, initNode: vd.declarations[0].init!, depth: 0 })
         }
         else if (n.declaration?.type === 'FunctionDeclaration') {
           const fd = n.declaration as t.FunctionDeclaration

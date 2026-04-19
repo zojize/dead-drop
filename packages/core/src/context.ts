@@ -274,7 +274,10 @@ function buildAllCandidates(): Candidate[] {
   // Leaves
   c.push({ key: 'NumericLiteral:0', nodeType: 'NumericLiteral', variant: 0, children: [], weight: lookupWeight('NumericLiteral:0'), isStatement: false })
   c.push({ key: 'StringLiteral:0', nodeType: 'StringLiteral', variant: 0, children: [], weight: lookupWeight('StringLiteral:0'), isStatement: false })
-  c.push({ key: 'Identifier:0', nodeType: 'Identifier', variant: 0, children: [], weight: lookupWeight('Identifier:0'), isStatement: false })
+  // Identifier:corpus — picks a name from the corpus identifier list (not a scope variable).
+  // variant = -1 signals corpus mode. Only present in the pool when scope is empty; when
+  // scope is non-empty, filterCandidates replaces it with dynamic Identifier:scope:i variants.
+  c.push({ key: 'Identifier:corpus', nodeType: 'Identifier', variant: -1, children: [], weight: lookupWeight('Identifier:0'), isStatement: false })
   c.push({ key: 'BooleanLiteral:1', nodeType: 'BooleanLiteral', variant: 1, children: [], weight: lookupWeight('BooleanLiteral:1'), isStatement: false })
   c.push({ key: 'BooleanLiteral:0', nodeType: 'BooleanLiteral', variant: 0, children: [], weight: lookupWeight('BooleanLiteral:0'), isStatement: false })
   c.push({ key: 'NullLiteral:0', nodeType: 'NullLiteral', variant: 0, children: [], weight: lookupWeight('NullLiteral:0'), isStatement: false })
@@ -492,7 +495,7 @@ export function filterCandidates(ctx: EncodingContext): Candidate[] {
   const hasMemberSafe = scopeHasType(ctx.typedScope, MEMBER_SAFE_TYPES)
   const hasAnyScope = ctx.typedScope.length > 0
 
-  return ALL_CANDIDATES.filter((c) => {
+  const basePool = ALL_CANDIDATES.filter((c) => {
     // Block depth limit: filter out block-containing statements when deep
     if (ctx.maxExprDepth < Infinity && ctx.blockDepth >= Math.floor(ctx.maxExprDepth / 3)) {
       if (c.isStatement && c.children.includes('block'))
@@ -533,6 +536,10 @@ export function filterCandidates(ctx: EncodingContext): Candidate[] {
 
     // Imports only appear before any non-import statement
     if (c.nodeType === 'ImportDeclaration' && ctx.hasLeftImportRegion)
+      return false
+
+    // Identifier:corpus is replaced by per-scope Identifier:scope:i variants when scope is non-empty
+    if (c.key === 'Identifier:corpus' && ctx.typedScope.length > 0)
       return false
 
     // Context-gated entries
@@ -578,12 +585,7 @@ export function filterCandidates(ctx: EncodingContext): Candidate[] {
 
     return true
   }).map((c) => {
-    let w = lookupWeight(c.key, ctx.scopeBucket)
-
-    // Dynamic weight: Identifier gets heavier with more scope entries
-    if (c.nodeType === 'Identifier' && ctx.typedScope.length > 0) {
-      w += ctx.typedScope.length * 0.5
-    }
+    let w = lookupWeight(c.key === 'Identifier:corpus' ? 'Identifier:0' : c.key, ctx.scopeBucket)
 
     // Bigram transition weight: adjust weight based on previous statement
     if (ctx.prevStmtKey && !ctx.expressionOnly) {
@@ -617,6 +619,35 @@ export function filterCandidates(ctx: EncodingContext): Candidate[] {
 
     return w !== c.weight ? { ...c, weight: w } : c
   })
+
+  // Dynamic per-scope Identifier variants: one per typedScope entry.
+  // Each encodes a reference to a specific declared variable. These replace
+  // Identifier:corpus when scope is non-empty, producing scope-referencing code.
+  // Weight per variant = corpus Identifier weight / N so combined weight ≈ corpus baseline.
+  if (ctx.expressionOnly && ctx.typedScope.length > 0) {
+    const corpusIdentWeight = lookupWeight('Identifier:0', ctx.scopeBucket)
+    const perVarWeight = corpusIdentWeight / ctx.typedScope.length
+
+    // Apply depth scaling to per-scope variants (same as other leaf expressions)
+    let depthScale = 1
+    if (ctx.exprDepth > 0 && ctx.maxExprDepth < Infinity) {
+      const depthRatio = ctx.exprDepth / ctx.maxExprDepth
+      depthScale = 10 ** (depthRatio * 4) // leaves scale UP near max depth
+    }
+
+    for (let i = 0; i < ctx.typedScope.length; i++) {
+      basePool.push({
+        key: `Identifier:scope:${i}`,
+        nodeType: 'Identifier',
+        variant: i,
+        children: [],
+        weight: perVarWeight * depthScale,
+        isStatement: false,
+      })
+    }
+  }
+
+  return basePool
 }
 
 /**

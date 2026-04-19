@@ -506,8 +506,27 @@ console.log(`\nIdentifier reference ratio: ${(identRefRatio * 100).toFixed(1)}% 
 // Store in global weights for use by filterCandidates
 nested.global.__identRefRatio__ = Math.round(identRefRatio * 1000) / 1000
 
+// Per-bucket identifier reference ratios
+// Fraction of expression nodes that are identifiers, per scope bucket.
+// Used to calibrate the per-scope Identifier:scope:i weight in filterCandidates.
+const identRefRatios: Record<string, number> = {}
+for (const bucket of ['top-level', 'function-body', 'loop-body', 'block-body'] as ScopeBucket[]) {
+  let bucketTotal = 0
+  let bucketIdent = 0
+  for (const [key, count] of counts[bucket].entries()) {
+    if (EXPR_KEYS.has(key)) {
+      bucketTotal += count
+      if (key === 'Identifier:0')
+        bucketIdent += count
+    }
+  }
+  identRefRatios[bucket] = bucketTotal > 0 ? Math.round((bucketIdent / bucketTotal) * 1000) / 1000 : identRefRatio
+  console.log(`  ${bucket} ident ratio: ${(identRefRatios[bucket] * 100).toFixed(1)}%`)
+}
+identRefRatios.global = Math.round(identRefRatio * 1000) / 1000
+
 const outPath = join(process.cwd(), 'packages/core/src/corpus-weights.json')
-writeFileSync(outPath, `${JSON.stringify(nested, null, 2)}\n`)
+writeFileSync(outPath, `${JSON.stringify({ ...nested, identRefRatios }, null, 2)}\n`)
 console.log(`\nWeights written to ${outPath}`)
 console.log(`Sizes — top-level: ${Object.keys(nested['top-level']).length}, function-body: ${Object.keys(nested['function-body']).length}, loop-body: ${Object.keys(nested['loop-body']).length}, block-body: ${Object.keys(nested['block-body']).length}, global: ${Object.keys(nested.global).length}`)
 

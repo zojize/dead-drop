@@ -205,44 +205,41 @@ describe('data lives in AST structure, not literal values', () => {
   })
 
   it('randomize all names, literals, and labels — decode still works', () => {
-    // This is the definitive test: encode a message, parse the output,
-    // walk the AST and randomize EVERY cosmetic value (identifier names,
-    // string literal values, numeric literal values, regex patterns,
-    // bigint values, template strings, labels, var names, catch params),
-    // regenerate JS from the mutated AST, and verify decode still works.
+    // Definitive test: encode a message, parse the output, walk the AST and
+    // randomize EVERY cosmetic value (identifier names — consistently renamed so
+    // all occurrences of the same name get the same replacement, string/numeric/
+    // bigint literal values, regex patterns, template strings), regenerate JS,
+    // and verify decode still returns the same bytes.
+    //
+    // Identifier names are consistently renamed because scope-referencing
+    // identifiers (Identifier:scope:i) are structural: the decoder uses the name
+    // to look up which scope entry was referenced. Consistent renaming preserves
+    // this: if var 'bq' → '_r5' everywhere, the decoder builds typedScope with
+    // '_r5' and resolves references to '_r5' at the same index. Inconsistent
+    // per-node renaming would corrupt the scope lookup.
 
     let nameIdx = 0
-    function randomizeName(): string {
-      // Unique names to avoid duplicate declarations
+    function freshName(): string {
       return `_r${nameIdx++}`
     }
 
-    let nameCounter = 0
-    const paramNodes = new Set()
-    function walk(node: any): void {
+    function walk(node: any, nameMap: Map<string, string>): void {
       if (!node || typeof node !== 'object')
         return
 
-      // For function/arrow params: assign unique names to avoid clash
-      if ((node.type === 'ArrowFunctionExpression' || node.type === 'FunctionExpression') && node.params) {
-        for (const p of node.params) {
-          if (p.type === 'Identifier') {
-            p.name = `_r${nameCounter++}`
-            paramNodes.add(p)
-          }
-        }
-      }
-
-      // Randomize cosmetic values (skip param identifiers — already handled)
-      if (node.type === 'Identifier' && typeof node.name === 'string' && !paramNodes.has(node)) {
-        node.name = randomizeName()
+      // Consistently remap identifier names: declaration sites and reference sites
+      // both get the same new name, preserving scope identity.
+      if (node.type === 'Identifier' && typeof node.name === 'string') {
+        if (!nameMap.has(node.name))
+          nameMap.set(node.name, freshName())
+        node.name = nameMap.get(node.name)!
       }
       if (node.type === 'NumericLiteral' && typeof node.value === 'number') {
         node.value = Math.floor(Math.random() * 99999)
         delete node.extra
       }
       if (node.type === 'StringLiteral' && typeof node.value === 'string') {
-        node.value = randomizeName()
+        node.value = freshName()
         delete node.extra
       }
       if (node.type === 'BigIntLiteral' && typeof node.value === 'string') {
@@ -250,11 +247,11 @@ describe('data lives in AST structure, not literal values', () => {
         delete node.extra
       }
       if (node.type === 'RegExpLiteral') {
-        node.pattern = randomizeName()
+        node.pattern = freshName()
         delete node.extra
       }
       if (node.type === 'TemplateElement' && node.value) {
-        const raw = randomizeName()
+        const raw = freshName()
         node.value = { raw, cooked: raw }
       }
       // Recurse
@@ -263,9 +260,9 @@ describe('data lives in AST structure, not literal values', () => {
           continue
         const val = node[key]
         if (Array.isArray(val))
-          val.forEach(walk)
+          val.forEach(child => walk(child, nameMap))
         else if (val && typeof val === 'object' && val.type)
-          walk(val)
+          walk(val, nameMap)
       }
     }
 
@@ -276,17 +273,17 @@ describe('data lives in AST structure, not literal values', () => {
 
       const js = encode(data)
 
-      // Parse → randomize → regenerate
+      // Parse → consistently rename → regenerate
       const ast = parse(js, {
         sourceType: 'module',
         allowReturnOutsideFunction: true,
         errorRecovery: true,
         plugins: [['optionalChainingAssign', { version: '2023-07' }]],
       })
-      walk(ast.program)
+      walk(ast.program, new Map())
       const randomized = generateCompact(ast.program)
 
-      // Decode the randomized JS — must still produce the same bytes
+      // Decode the consistently-renamed JS — must still produce the same bytes
       const out = decode(randomized)
       expect(Array.from(out)).toEqual(Array.from(data))
     }
