@@ -12,7 +12,7 @@ export interface DecodeOptions {
 type WorkItem
   = | { kind: 'expr', node: t.Node, depth: number }
     | { kind: 'stmt', node: t.Node, prev: string }
-    | { kind: 'block', stmts: readonly t.Statement[] }
+    | { kind: 'block', stmts: readonly t.Node[] }
     | { kind: 'block-depth-dec' }
     | { kind: 'scope-save', scope: string[], typedScope: any[], inFunction: boolean }
     | { kind: 'scope-restore', scope: string[], typedScope: any[], inFunction: boolean }
@@ -43,6 +43,10 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
     switch (node.type) {
       case 'NumericLiteral': return 'NumericLiteral:0'
       case 'StringLiteral': return 'StringLiteral:0'
+      // DirectiveLiteral: Babel creates this when it re-parses a StringLiteral expression
+      // at the start of a function body as a Directive node. The encoder emitted
+      // StringLiteral:0 so we map back to the same key.
+      case 'DirectiveLiteral': return 'StringLiteral:0'
       case 'Identifier': {
         // Determine if this identifier references a scope variable (Identifier:scope:i)
         // or a corpus ident (Identifier:corpus). Both encoder and decoder track typedScope
@@ -226,7 +230,8 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
       }
       case 'ArrowFunctionExpression': {
         const n = node as t.ArrowFunctionExpression
-        const params = n.params.map((_, i) => nameFromHash(hash, 900 + i))
+        const genParams = n.params.map((_, i) => nameFromHash(hash, 900 + i))
+        const actualParams = n.params.map(p => (p as t.Identifier).name)
         work.push({ kind: 'scope-restore', scope: [...ctx.scope], typedScope: [...ctx.typedScope], inFunction: ctx.inFunction })
         work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
         const bodyNode = n.body.type === 'BlockStatement'
@@ -236,19 +241,22 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
           work.push({ kind: 'expr', node: bodyNode, depth: d })
         work.push({ kind: 'bucket-enter', bucket: 'function-body' })
         // Push scope-save AFTER body (LIFO: save executes first)
-        work.push({ kind: 'scope-save', scope: params, typedScope: params.map(p => ({ name: p, type: 'any' })), inFunction: true })
+        // Use genParams for scope dedup tracking, actualParams for typedScope name lookup
+        work.push({ kind: 'scope-save', scope: genParams, typedScope: actualParams.map(p => ({ name: p, type: 'any' })), inFunction: true })
         break
       }
       case 'FunctionExpression': {
         const n = node as t.FunctionExpression
-        const params = n.params.map((_, i) => nameFromHash(hash, 900 + i))
+        const genParams = n.params.map((_, i) => nameFromHash(hash, 900 + i))
+        const actualParams = n.params.map(p => (p as t.Identifier).name)
         work.push({ kind: 'scope-restore', scope: [...ctx.scope], typedScope: [...ctx.typedScope], inFunction: ctx.inFunction })
         work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
         const ret = n.body.body[0]
         if (ret?.type === 'ReturnStatement')
           work.push({ kind: 'expr', node: (ret as t.ReturnStatement).argument!, depth: d })
         work.push({ kind: 'bucket-enter', bucket: 'function-body' })
-        work.push({ kind: 'scope-save', scope: params, typedScope: params.map(p => ({ name: p, type: 'any' })), inFunction: true })
+        // Use genParams for scope dedup tracking, actualParams for typedScope name lookup
+        work.push({ kind: 'scope-save', scope: genParams, typedScope: actualParams.map(p => ({ name: p, type: 'any' })), inFunction: true })
         break
       }
       case 'ClassExpression':
@@ -267,7 +275,10 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
   function pushStmtChildren(node: t.Node): void {
     switch (node.type) {
       case 'Directive':
-        // Directive is a leaf — no children to push (treated as StringLiteral:0, a leaf expression)
+        // Babel parses leading string literals in function bodies as Directives.
+        // The encoder produced ExpressionStatement(StringLiteral), so push the
+        // DirectiveLiteral value as an expression to recover the StringLiteral:0 bits.
+        work.push({ kind: 'expr', node: (node as t.Directive).value, depth: 0 })
         break
       case 'ExpressionStatement':
         // ExpressionStatement:0 was selected from statement table; the inner
@@ -407,8 +418,12 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         else if (n.declaration?.type === 'FunctionDeclaration') {
           const fd = n.declaration as t.FunctionDeclaration
           const fnName = (fd.id as t.Identifier).name
-          const params = fd.params.map((_, i) => nameFromHash(hash, 900 + i))
-          const bodyStmts = fd.body.body
+          const genParams = fd.params.map((_, i) => nameFromHash(hash, 900 + i))
+          const actualParams = fd.params.map(p => (p as t.Identifier).name)
+          // Include directives: a leading string literal in the function body is parsed by
+          // Babel as a Directive (in fd.body.directives), not an ExpressionStatement (in
+          // fd.body.body). The encoder counted it as a regular statement, so we must too.
+          const bodyStmts: readonly t.Node[] = [...fd.body.directives, ...fd.body.body]
           // LIFO: push in reverse order of desired execution
           // Execution order: scope-save → bucket-enter → block → bucket-exit → scope-restore → scope-push
           work.push({ kind: 'scope-push', name: fnName, type: 'function' })
@@ -416,7 +431,8 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
           work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
           work.push({ kind: 'block', stmts: bodyStmts })
           work.push({ kind: 'bucket-enter', bucket: 'function-body' })
-          work.push({ kind: 'scope-save', scope: params, typedScope: params.map(p => ({ name: p, type: 'any' })), inFunction: true })
+          // Use genParams for scope dedup tracking, actualParams for typedScope name lookup
+          work.push({ kind: 'scope-save', scope: genParams, typedScope: actualParams.map(p => ({ name: p, type: 'any' })), inFunction: true })
         }
         break
       }
@@ -469,9 +485,10 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         const table = buildTable(candidates, hash)
         const bits = bitWidth(table.length)
         const rev = buildReverseTable(table)
-        // ExpressionStatement: use 'ExpressionStatement:0' for statement table lookup,
-        // then process the inner expression separately via the expression table
-        const key = item.node.type === 'ExpressionStatement'
+        // ExpressionStatement and Directive both map to 'ExpressionStatement:0' for the
+        // statement table lookup. Babel re-parses a leading string-literal ExpressionStatement
+        // inside a function body as a Directive — the encoder still selected ExpressionStatement:0.
+        const key = (item.node.type === 'ExpressionStatement' || item.node.type === 'Directive')
           ? 'ExpressionStatement:0'
           : stmtKey(item.node)
         const value = rev.get(key)
