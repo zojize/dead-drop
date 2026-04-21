@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.0.1](https://github.com/zojize/dead-drop/compare/v7.0.0...v7.0.1) (2026-04-21)
+
+
+### Bug Fixes
+
+* restore formatter-survival commits (PR [#12](https://github.com/zojize/dead-drop/issues/12) dropped by history rewrite) ([#15](https://github.com/zojize/dead-drop/issues/15)) ([f44f7b8](https://github.com/zojize/dead-drop/commit/f44f7b8bdbc5e84e54b82e7ba903a11fd77beb7a))
+
 ## [7.0.0](https://github.com/zojize/dead-drop/compare/v6.1.0...v7.0.0) (2026-04-21)
 
 
