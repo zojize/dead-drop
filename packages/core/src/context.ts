@@ -432,11 +432,11 @@ function buildAllCandidates(): Candidate[] {
   // ThrowStatement (weight 0.5)
   c.push({ key: 'ThrowStatement:0', nodeType: 'ThrowStatement', variant: 0, children: ['expr'], weight: lookupWeight('ThrowStatement:0'), isStatement: true })
 
-  // EmptyStatement (weight 0.25 — leaf)
-  c.push({ key: 'EmptyStatement:0', nodeType: 'EmptyStatement', variant: 0, children: [], weight: lookupWeight('EmptyStatement:0'), isStatement: true })
+  // EmptyStatement intentionally excluded: formatters (Prettier, Biome) strip bare `;`
+  // from all block contexts, changing stmts.length and corrupting the count byte.
 
-  // DebuggerStatement (weight 0.25 — leaf)
-  c.push({ key: 'DebuggerStatement:0', nodeType: 'DebuggerStatement', variant: 0, children: [], weight: lookupWeight('DebuggerStatement:0'), isStatement: true })
+  // DebuggerStatement intentionally excluded: oxlint (no-debugger, auto-fixable) and
+  // some ESLint configs remove debugger statements, corrupting block counts the same way.
 
   // Context-gated statements (added dynamically):
   // ReturnStatement (weight 1, only in function)
@@ -635,7 +635,18 @@ export function filterCandidates(ctx: EncodingContext): Candidate[] {
       depthScale = 10 ** (depthRatio * 4) // leaves scale UP near max depth
     }
 
+    // Build a name → last-index map to respect JS shadowing semantics:
+    // if a param name shadows an outer variable, only the innermost binding
+    // is reachable. Adding both would create two candidates with the same
+    // generated identifier, making the lookup non-bijective.
+    const nameToLastIdx = new Map<string, number>()
+    for (let i = 0; i < ctx.typedScope.length; i++)
+      nameToLastIdx.set(ctx.typedScope[i].name, i)
+
     for (let i = 0; i < ctx.typedScope.length; i++) {
+      // Skip shadowed (non-innermost) bindings
+      if (nameToLastIdx.get(ctx.typedScope[i].name) !== i)
+        continue
       basePool.push({
         key: `Identifier:scope:${i}`,
         nodeType: 'Identifier',
