@@ -30,7 +30,7 @@ export function Playground() {
   const [input, setInputRaw] = useState(restored.current?.input ?? '')
   const [seed, setSeed] = useState<number | undefined>(restored.current?.seed)
   const [key, setKey] = useState<number | undefined>(restored.current?.key)
-  const [maxDepth, setMaxDepth] = useState<number | undefined>(restored.current?.maxDepth ?? 20)
+  const [maxDepth, setMaxDepth] = useState<number | undefined>(restored.current?.maxDepth)
   const [encoded, setEncodedRaw] = useState('')
   const [decoded, setDecoded] = useState('')
   const [error, setError] = useState('')
