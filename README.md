@@ -123,8 +123,8 @@ values (identifier names, strings, numbers) are cosmetic:
 | RegExpLiteral | node type alone | 1 |
 | Binary/Logical/Assign/Unary ops | `.operator` | 42 |
 | Call/New/Array/Object/Sequence | child count | 82 |
-| Arrow/Function expressions | `.params.length` | 32 |
-| Template/TaggedTemplate | `.expressions.length` | 16 |
+| Arrow/Function expressions | `.params.length` | 8 |
+| Template/TaggedTemplate | `.expressions.length` | 7 |
 | Update expression | `.operator` × `.prefix` | 4 |
 | Boolean/Class/Member variants | boolean flags | 8 |
 | Leaf types | node type alone | 8 |
@@ -144,7 +144,7 @@ same hash at the same position, so it never needs to know pool values.
 for each top-level statement:
     rebuild the dynamic table from context + hash
     identify the node's candidate key from structural properties
-    reverse-lookup the key in the table → recover the byte
+    reverse-lookup the key in the table → recover floor(log2(N)) bits
     process children in the same order as the encoder
 
 extract length from first 4 bytes
@@ -157,11 +157,12 @@ return bytes[4 .. 4+length]
   decoder ignores them. You can randomize every name, string, and number
   in the encoded JS and `decode()` still returns the same bytes.
 
-- **Output limitations.** It tries to generate JS that runs without errors, but it does not
-  guarantee termination. The encoder tracks the inferred type of each declared
-  variable (`function`, `array`, `object`, etc.) and only offers operations
-  when their operand types are available — e.g. `CallExpression` only when scope
-  has a callable. Unlike binary-level tools like
+- **Output limitations.** The output is syntactically valid JavaScript but is not
+  designed to run correctly. Literal values are cosmetic, so callees can be
+  booleans or null (`false()`, `null()`), operand types mismatch, and so on.
+  The encoder does some light type-tracking (e.g. `CallExpression` is only added
+  to the candidate pool when scope contains a callable) but this is for structural
+  plausibility, not runtime correctness. Unlike binary-level tools like
   [Hydan](https://www.cs.columbia.edu/~angelos/Papers/hydan.pdf) that embed data
   in working executables, dead-drop generates the cover medium from scratch.
   This sacrifices plausible functionality but gains a much larger encoding alphabet
@@ -170,7 +171,7 @@ return bytes[4 .. 4+length]
 
 - **Dynamic tables from context.** The candidate pool includes both
   statement and expression types, filtered and shuffled per-position.
-  Type-gated candidates produce realistic, runnable JS with control flow,
+  Type-gated candidates produce structurally plausible JS with control flow,
   declarations, and scope-aware variable references.
 
 - **Deterministic hash-based shuffle.** The table ordering at each position
@@ -199,7 +200,7 @@ return bytes[4 .. 4+length]
 bun install
 bun run lint          # lint (uses @antfu/eslint-config)
 bun run lint:fix      # auto-fix lint issues
-bun run test          # 68 tests including fuzz, ordering quality, and randomization invariant
+bun run test          # 73 tests including fuzz, ordering quality, and randomization invariant
 bun run typecheck     # typecheck all packages
 bun run knip          # check for unused deps/exports
 ```

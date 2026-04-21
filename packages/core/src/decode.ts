@@ -50,9 +50,11 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
       case 'Identifier': {
         // Determine if this identifier references a scope variable (Identifier:scope:i)
         // or a corpus ident (Identifier:corpus). Both encoder and decoder track typedScope
-        // in identical order, so findIndex gives the same variant index.
+        // in identical order. Use findLastIndex (not findFirst) so that when a param name
+        // shadows an outer variable, we get the innermost binding — matching filterCandidates
+        // which only adds Identifier:scope:i for the last occurrence of each name.
         const name = (node as t.Identifier).name
-        const idx = ctx.typedScope.findIndex(e => e.name === name)
+        const idx = ctx.typedScope.findLastIndex(e => e.name === name)
         if (idx >= 0)
           return `Identifier:scope:${idx}`
         return 'Identifier:corpus'
