@@ -181,10 +181,11 @@ return bytes[4 .. 4+length]
   decoder: `createCodec({ seed, key, maxExprDepth })` returns `{ encode, decode }`.
   `seed` is cosmetic-only (names, strings, numbers); `key` is structural and
   changes candidate selection — decoder must receive the same key.
-  `maxExprDepth` hard-caps expression nesting depth — at the limit, all
-  expression children become cosmetic (non-data-carrying). This keeps the
-  AST shallow enough for browser parsers (which use recursive descent and
-  overflow on deep trees).
+  `maxExprDepth` hard-caps expression nesting depth (default 1). At the limit,
+  only leaf expressions (literals, identifiers) are available as candidates,
+  so the AST never exceeds the bound. Shallow depth produces many short
+  statements per message (realistic module structure); higher depth produces
+  fewer, more complex statements.
 
 - **Custom code generator.** Handles 20+ AST node types with correct
   parenthesization, regex adjacency, and object/block disambiguation.
@@ -198,7 +199,7 @@ return bytes[4 .. 4+length]
 bun install
 bun run lint          # lint (uses @antfu/eslint-config)
 bun run lint:fix      # auto-fix lint issues
-bun run test          # 66 tests including fuzz, ordering quality, and randomization invariant
+bun run test          # 68 tests including fuzz, ordering quality, and randomization invariant
 bun run typecheck     # typecheck all packages
 bun run knip          # check for unused deps/exports
 ```

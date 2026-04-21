@@ -1,7 +1,7 @@
 import type * as t from '@babel/types'
 import type { EncodingContext, ScopeBucket } from './context'
 import { parse } from '@babel/parser'
-import { ASSIGN_OPS, bigramKey, BINARY_OPS, bitWidth, BitWriter, buildReverseTable, buildTable, deriveScopeBucket, filterCandidates, inferTypeFromKey, initialContext, LOGICAL_OPS, MAX_EXPR_DEPTH, mixHash, nameFromHash, UNARY_OPS } from './context'
+import { ASSIGN_OPS, bigramKey, BINARY_OPS, bitWidth, BitWriter, buildReverseTable, buildTable, deriveScopeBucket, filterCandidates, inferTypeFromKey, initialContext, LOGICAL_OPS, MAX_EXPR_DEPTH, mixHash, nameFromHash, stmtDepthFromHash, UNARY_OPS } from './context'
 
 export interface DecodeOptions {
   /** Structural key — must match the key used during encoding. */
@@ -12,7 +12,7 @@ export interface DecodeOptions {
 type WorkItem
   = | { kind: 'expr', node: t.Node, depth: number }
     | { kind: 'stmt', node: t.Node, prev: string }
-    | { kind: 'block', stmts: readonly t.Statement[] }
+    | { kind: 'block', stmts: readonly t.Node[] }
     | { kind: 'block-depth-dec' }
     | { kind: 'scope-save', scope: string[], typedScope: any[], inFunction: boolean }
     | { kind: 'scope-restore', scope: string[], typedScope: any[], inFunction: boolean }
@@ -23,6 +23,7 @@ type WorkItem
     | { kind: 'scope-push', name: string, type: string }
     | { kind: 'bucket-enter', bucket: ScopeBucket }
     | { kind: 'bucket-exit', prev: ScopeBucket }
+    | { kind: 'max-depth-restore', saved: number }
 
 export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
   const ast = parse(jsSource, {
@@ -42,7 +43,20 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
     switch (node.type) {
       case 'NumericLiteral': return 'NumericLiteral:0'
       case 'StringLiteral': return 'StringLiteral:0'
-      case 'Identifier': return 'Identifier:0'
+      // DirectiveLiteral: Babel creates this when it re-parses a StringLiteral expression
+      // at the start of a function body as a Directive node. The encoder emitted
+      // StringLiteral:0 so we map back to the same key.
+      case 'DirectiveLiteral': return 'StringLiteral:0'
+      case 'Identifier': {
+        // Determine if this identifier references a scope variable (Identifier:scope:i)
+        // or a corpus ident (Identifier:corpus). Both encoder and decoder track typedScope
+        // in identical order, so findIndex gives the same variant index.
+        const name = (node as t.Identifier).name
+        const idx = ctx.typedScope.findIndex(e => e.name === name)
+        if (idx >= 0)
+          return `Identifier:scope:${idx}`
+        return 'Identifier:corpus'
+      }
       case 'BooleanLiteral': return `BooleanLiteral:${node.value ? 1 : 0}`
       case 'NullLiteral': return 'NullLiteral:0'
       case 'ThisExpression': return 'ThisExpression:0'
@@ -196,7 +210,7 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         for (let i = (node as t.ObjectExpression).properties.length - 1; i >= 0; i--) {
           const p = (node as t.ObjectExpression).properties[i] as t.ObjectProperty
           work.push({ kind: 'expr', node: p.value, depth: d })
-          work.push({ kind: 'expr', node: p.key, depth: d })
+          // key is now a cosmetic short identifier — not structural
         }
         break
       case 'SequenceExpression':
@@ -216,7 +230,8 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
       }
       case 'ArrowFunctionExpression': {
         const n = node as t.ArrowFunctionExpression
-        const params = n.params.map((_, i) => nameFromHash(hash, 900 + i))
+        const genParams = n.params.map((_, i) => nameFromHash(hash, 900 + i))
+        const actualParams = n.params.map(p => (p as t.Identifier).name)
         work.push({ kind: 'scope-restore', scope: [...ctx.scope], typedScope: [...ctx.typedScope], inFunction: ctx.inFunction })
         work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
         const bodyNode = n.body.type === 'BlockStatement'
@@ -226,19 +241,22 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
           work.push({ kind: 'expr', node: bodyNode, depth: d })
         work.push({ kind: 'bucket-enter', bucket: 'function-body' })
         // Push scope-save AFTER body (LIFO: save executes first)
-        work.push({ kind: 'scope-save', scope: params, typedScope: params.map(p => ({ name: p, type: 'any' })), inFunction: true })
+        // Use genParams for scope dedup tracking, actualParams for typedScope name lookup
+        work.push({ kind: 'scope-save', scope: genParams, typedScope: actualParams.map(p => ({ name: p, type: 'any' })), inFunction: true })
         break
       }
       case 'FunctionExpression': {
         const n = node as t.FunctionExpression
-        const params = n.params.map((_, i) => nameFromHash(hash, 900 + i))
+        const genParams = n.params.map((_, i) => nameFromHash(hash, 900 + i))
+        const actualParams = n.params.map(p => (p as t.Identifier).name)
         work.push({ kind: 'scope-restore', scope: [...ctx.scope], typedScope: [...ctx.typedScope], inFunction: ctx.inFunction })
         work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
         const ret = n.body.body[0]
         if (ret?.type === 'ReturnStatement')
           work.push({ kind: 'expr', node: (ret as t.ReturnStatement).argument!, depth: d })
         work.push({ kind: 'bucket-enter', bucket: 'function-body' })
-        work.push({ kind: 'scope-save', scope: params, typedScope: params.map(p => ({ name: p, type: 'any' })), inFunction: true })
+        // Use genParams for scope dedup tracking, actualParams for typedScope name lookup
+        work.push({ kind: 'scope-save', scope: genParams, typedScope: actualParams.map(p => ({ name: p, type: 'any' })), inFunction: true })
         break
       }
       case 'ClassExpression':
@@ -257,17 +275,26 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
   function pushStmtChildren(node: t.Node): void {
     switch (node.type) {
       case 'Directive':
-        // Directive is a leaf — no children to push (treated as StringLiteral:0, a leaf expression)
+        // Babel parses leading string literals in function bodies as Directives.
+        // The encoder produced ExpressionStatement(StringLiteral), so push the
+        // DirectiveLiteral value as an expression to recover the StringLiteral:0 bits.
+        work.push({ kind: 'expr', node: (node as t.Directive).value, depth: 0 })
         break
       case 'ExpressionStatement':
-        // Expression was directly selected as a candidate in statement context
-        pushExprChildren((node as t.ExpressionStatement).expression, 0)
+        // ExpressionStatement:0 was selected from statement table; the inner
+        // expression is processed via the expression table (separate lookup)
+        work.push({ kind: 'expr', node: (node as t.ExpressionStatement).expression, depth: 0 })
         break
       case 'VariableDeclaration': {
         const n = node as t.VariableDeclaration
-        const name = nameFromHash(hash, ctx.scope.length)
-        ctx.scope.push(name)
-        work.push({ kind: 'var-decl', name, initNode: n.declarations[0].init!, depth: 0 })
+        let genName = nameFromHash(hash, ctx.scope.length)
+        while (ctx.scope.includes(genName))
+          genName = `${genName}${ctx.scope.length}`
+        ctx.scope.push(genName)
+        // Use the actual AST name for typedScope so Identifier:scope:i lookup works
+        // regardless of cosmetic renaming. genName is used only for dedup tracking.
+        const actualName = (n.declarations[0].id as t.Identifier).name
+        work.push({ kind: 'var-decl', name: actualName, initNode: n.declarations[0].init!, depth: 0 })
         break
       }
       case 'IfStatement': {
@@ -344,8 +371,7 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
           work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
           work.push({ kind: 'block', stmts: n.cases[i].consequent })
           work.push({ kind: 'bucket-enter', bucket: deriveScopeBucket('SwitchCase', 'consequent') })
-          if (n.cases[i].test)
-            work.push({ kind: 'expr', node: n.cases[i].test!, depth: 0 })
+          // case test is now a cosmetic small integer — not structural
         }
         work.push({ kind: 'expr', node: n.discriminant, depth: 0 })
         break
@@ -373,6 +399,7 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         break
       }
       case 'ExportDefaultDeclaration': {
+        ctx.hasExportDefault = true
         const n = node as t.ExportDefaultDeclaration
         work.push({ kind: 'expr', node: n.declaration as t.Node, depth: 0 })
         break
@@ -381,15 +408,22 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         const n = node as t.ExportNamedDeclaration
         if (n.declaration?.type === 'VariableDeclaration') {
           const vd = n.declaration as t.VariableDeclaration
-          const name = nameFromHash(hash, ctx.scope.length)
-          ctx.scope.push(name)
-          work.push({ kind: 'var-decl', name, initNode: vd.declarations[0].init!, depth: 0 })
+          let genName = nameFromHash(hash, ctx.scope.length)
+          while (ctx.scope.includes(genName))
+            genName = `${genName}${ctx.scope.length}`
+          ctx.scope.push(genName)
+          const actualVdName = (vd.declarations[0].id as t.Identifier).name
+          work.push({ kind: 'var-decl', name: actualVdName, initNode: vd.declarations[0].init!, depth: 0 })
         }
         else if (n.declaration?.type === 'FunctionDeclaration') {
           const fd = n.declaration as t.FunctionDeclaration
           const fnName = (fd.id as t.Identifier).name
-          const params = fd.params.map((_, i) => nameFromHash(hash, 900 + i))
-          const bodyStmts = fd.body.body
+          const genParams = fd.params.map((_, i) => nameFromHash(hash, 900 + i))
+          const actualParams = fd.params.map(p => (p as t.Identifier).name)
+          // Include directives: a leading string literal in the function body is parsed by
+          // Babel as a Directive (in fd.body.directives), not an ExpressionStatement (in
+          // fd.body.body). The encoder counted it as a regular statement, so we must too.
+          const bodyStmts: readonly t.Node[] = [...fd.body.directives, ...fd.body.body]
           // LIFO: push in reverse order of desired execution
           // Execution order: scope-save → bucket-enter → block → bucket-exit → scope-restore → scope-push
           work.push({ kind: 'scope-push', name: fnName, type: 'function' })
@@ -397,7 +431,8 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
           work.push({ kind: 'bucket-exit', prev: ctx.scopeBucket })
           work.push({ kind: 'block', stmts: bodyStmts })
           work.push({ kind: 'bucket-enter', bucket: 'function-body' })
-          work.push({ kind: 'scope-save', scope: params, typedScope: params.map(p => ({ name: p, type: 'any' })), inFunction: true })
+          // Use genParams for scope dedup tracking, actualParams for typedScope name lookup
+          work.push({ kind: 'scope-save', scope: genParams, typedScope: actualParams.map(p => ({ name: p, type: 'any' })), inFunction: true })
         }
         break
       }
@@ -450,9 +485,11 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         const table = buildTable(candidates, hash)
         const bits = bitWidth(table.length)
         const rev = buildReverseTable(table)
-        // ExpressionStatement: always use the inner expression's key
-        const key = item.node.type === 'ExpressionStatement'
-          ? exprKey((item.node as t.ExpressionStatement).expression)
+        // ExpressionStatement and Directive both map to 'ExpressionStatement:0' for the
+        // statement table lookup. Babel re-parses a leading string-literal ExpressionStatement
+        // inside a function body as a Directive — the encoder still selected ExpressionStatement:0.
+        const key = (item.node.type === 'ExpressionStatement' || item.node.type === 'Directive')
+          ? 'ExpressionStatement:0'
           : stmtKey(item.node)
         const value = rev.get(key)
         if (value !== undefined) {
@@ -462,6 +499,13 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
         else {
           out.write(0, bits)
           hash = mixHash(hash, 0)
+        }
+        if (ctx.blockDepth === 0 && item.node.type !== 'ImportDeclaration')
+          ctx.hasLeftImportRegion = true
+        if (ctx.blockDepth === 0 && ctx.maxExprDepth > 1) {
+          const cap = stmtDepthFromHash(hash, ctx.maxExprDepth)
+          work.push({ kind: 'max-depth-restore', saved: ctx.maxExprDepth })
+          ctx.maxExprDepth = cap
         }
         pushStmtChildren(item.node)
         break
@@ -518,6 +562,10 @@ export function decode(jsSource: string, options?: DecodeOptions): Uint8Array {
 
       case 'bucket-exit':
         ctx.scopeBucket = item.prev
+        break
+
+      case 'max-depth-restore':
+        ctx.maxExprDepth = item.saved
         break
 
       case 'var-decl': {
