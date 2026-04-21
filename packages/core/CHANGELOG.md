@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.0.1](https://github.com/zojize/dead-drop/compare/v7.0.0...v7.0.1) (2026-04-21)
+
+
+### Bug Fixes
+
+* formatter survival — remove EmptyStatement/DebuggerStatement, fix scope-shadowing collision ([#12](https://github.com/zojize/dead-drop/issues/12)) ([3bda144](https://github.com/zojize/dead-drop/commit/3bda1441632eaad431023bc692a42f664a88146c))
+
 ## [7.0.0](https://github.com/zojize/dead-drop/compare/v6.1.0...v7.0.0) (2026-04-21)
 
 
