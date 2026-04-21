@@ -205,47 +205,41 @@ describe('data lives in AST structure, not literal values', () => {
   })
 
   it('randomize all names, literals, and labels — decode still works', () => {
-    // This is the definitive test: encode a message, parse the output,
-    // walk the AST and randomize EVERY cosmetic value (identifier names,
-    // string literal values, numeric literal values, regex patterns,
-    // bigint values, template strings, labels, var names, catch params),
-    // regenerate JS from the mutated AST, and verify decode still works.
+    // Definitive test: encode a message, parse the output, walk the AST and
+    // randomize EVERY cosmetic value (identifier names — consistently renamed so
+    // all occurrences of the same name get the same replacement, string/numeric/
+    // bigint literal values, regex patterns, template strings), regenerate JS,
+    // and verify decode still returns the same bytes.
+    //
+    // Identifier names are consistently renamed because scope-referencing
+    // identifiers (Identifier:scope:i) are structural: the decoder uses the name
+    // to look up which scope entry was referenced. Consistent renaming preserves
+    // this: if var 'bq' → '_r5' everywhere, the decoder builds typedScope with
+    // '_r5' and resolves references to '_r5' at the same index. Inconsistent
+    // per-node renaming would corrupt the scope lookup.
 
-    function randomizeName(): string {
-      // _ prefix guarantees it's never a JS keyword
-      const chars = 'abcdefghijklmnopqrstuvwxyz'
-      const len = 1 + Math.floor(Math.random() * 5)
-      let s = '_'
-      for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * chars.length)]
-      return s
+    let nameIdx = 0
+    function freshName(): string {
+      return `_r${nameIdx++}`
     }
 
-    let nameCounter = 0
-    const paramNodes = new Set()
-    function walk(node: any): void {
+    function walk(node: any, nameMap: Map<string, string>): void {
       if (!node || typeof node !== 'object')
         return
 
-      // For function/arrow params: assign unique names to avoid clash
-      if ((node.type === 'ArrowFunctionExpression' || node.type === 'FunctionExpression') && node.params) {
-        for (const p of node.params) {
-          if (p.type === 'Identifier') {
-            p.name = `_r${nameCounter++}`
-            paramNodes.add(p)
-          }
-        }
-      }
-
-      // Randomize cosmetic values (skip param identifiers — already handled)
-      if (node.type === 'Identifier' && typeof node.name === 'string' && !paramNodes.has(node)) {
-        node.name = randomizeName()
+      // Consistently remap identifier names: declaration sites and reference sites
+      // both get the same new name, preserving scope identity.
+      if (node.type === 'Identifier' && typeof node.name === 'string') {
+        if (!nameMap.has(node.name))
+          nameMap.set(node.name, freshName())
+        node.name = nameMap.get(node.name)!
       }
       if (node.type === 'NumericLiteral' && typeof node.value === 'number') {
         node.value = Math.floor(Math.random() * 99999)
         delete node.extra
       }
       if (node.type === 'StringLiteral' && typeof node.value === 'string') {
-        node.value = randomizeName()
+        node.value = freshName()
         delete node.extra
       }
       if (node.type === 'BigIntLiteral' && typeof node.value === 'string') {
@@ -253,11 +247,11 @@ describe('data lives in AST structure, not literal values', () => {
         delete node.extra
       }
       if (node.type === 'RegExpLiteral') {
-        node.pattern = randomizeName()
+        node.pattern = freshName()
         delete node.extra
       }
       if (node.type === 'TemplateElement' && node.value) {
-        const raw = randomizeName()
+        const raw = freshName()
         node.value = { raw, cooked: raw }
       }
       // Recurse
@@ -266,9 +260,9 @@ describe('data lives in AST structure, not literal values', () => {
           continue
         const val = node[key]
         if (Array.isArray(val))
-          val.forEach(walk)
+          val.forEach(child => walk(child, nameMap))
         else if (val && typeof val === 'object' && val.type)
-          walk(val)
+          walk(val, nameMap)
       }
     }
 
@@ -279,17 +273,17 @@ describe('data lives in AST structure, not literal values', () => {
 
       const js = encode(data)
 
-      // Parse → randomize → regenerate
+      // Parse → consistently rename → regenerate
       const ast = parse(js, {
         sourceType: 'module',
         allowReturnOutsideFunction: true,
         errorRecovery: true,
         plugins: [['optionalChainingAssign', { version: '2023-07' }]],
       })
-      walk(ast.program)
+      walk(ast.program, new Map())
       const randomized = generateCompact(ast.program)
 
-      // Decode the randomized JS — must still produce the same bytes
+      // Decode the consistently-renamed JS — must still produce the same bytes
       const out = decode(randomized)
       expect(Array.from(out)).toEqual(Array.from(data))
     }
@@ -305,7 +299,7 @@ describe('encode output validity', () => {
     ]
     for (const msg of msgs) {
       const js = encode(msg)
-      expect(() => parse(js)).not.toThrow()
+      expect(() => parse(js, { sourceType: 'module' })).not.toThrow()
     }
   })
 
@@ -331,7 +325,178 @@ describe('import candidates', () => {
   })
 })
 
+/**
+ * Walk a JS string and return the maximum expression nesting depth (0-based).
+ * Mirrors the encoder: depth 0 = direct expression child of a statement,
+ * +1 for each expression child recursion. Cosmetic (non-structural) children
+ * like object keys, switch-case tests, and label names are not counted.
+ */
+function measureMaxExprDepth(js: string): number {
+  const ast = parse(js, { sourceType: 'module', plugins: [['optionalChainingAssign', { version: '2023-07' }]] })
+  let max = -1
+
+  function e(node: any, d: number): void {
+    if (!node || typeof node !== 'object')
+      return
+    if (d > max)
+      max = d
+    const c = d + 1
+    switch (node.type) {
+      case 'BinaryExpression':
+      case 'LogicalExpression':
+        e(node.left, c)
+        e(node.right, c)
+        break
+      case 'AssignmentExpression':
+        e(node.right, c)
+        break
+      case 'UnaryExpression':
+        e(node.argument, c)
+        break
+      case 'ConditionalExpression':
+        e(node.test, c)
+        e(node.consequent, c)
+        e(node.alternate, c)
+        break
+      case 'CallExpression':
+      case 'OptionalCallExpression':
+        e(node.callee, c)
+        node.arguments.forEach((a: any) => e(a, c))
+        break
+      case 'NewExpression':
+        e(node.callee, c)
+        node.arguments.forEach((a: any) => e(a, c))
+        break
+      case 'MemberExpression':
+      case 'OptionalMemberExpression':
+        e(node.object, c)
+        if (node.computed)
+          e(node.property, c)
+        break
+      case 'ArrayExpression':
+        node.elements.forEach((el: any) => el && e(el, c))
+        break
+      case 'ObjectExpression':
+        node.properties.forEach((p: any) => e(p.value, c))
+        break
+      case 'SequenceExpression':
+        node.expressions.forEach((ex: any) => e(ex, c))
+        break
+      case 'TemplateLiteral':
+        node.expressions.forEach((ex: any) => e(ex, c))
+        break
+      case 'TaggedTemplateExpression':
+        e(node.tag, c)
+        node.quasi.expressions.forEach((ex: any) => e(ex, c))
+        break
+      case 'ArrowFunctionExpression': {
+        const body = node.body.type === 'BlockStatement' ? node.body.body[0]?.argument : node.body
+        if (body)
+          e(body, c)
+        break
+      }
+      case 'FunctionExpression': {
+        const ret = node.body?.body?.[0]
+        if (ret?.type === 'ReturnStatement' && ret.argument)
+          e(ret.argument, c)
+        break
+      }
+      case 'AwaitExpression':
+        e(node.argument, c)
+        break
+      case 'ClassExpression':
+        if (node.superClass)
+          e(node.superClass, c)
+        break
+    }
+  }
+
+  function s(node: any): void {
+    if (!node)
+      return
+    switch (node.type) {
+      case 'ExpressionStatement':
+        e(node.expression, 0)
+        break
+      case 'VariableDeclaration':
+        node.declarations.forEach((d: any) => d.init && e(d.init, 0))
+        break
+      case 'ExportDefaultDeclaration':
+        e(node.declaration, 0)
+        break
+      case 'ExportNamedDeclaration':
+        if (node.declaration?.type === 'VariableDeclaration')
+          node.declaration.declarations.forEach((d: any) => d.init && e(d.init, 0))
+        else if (node.declaration?.type === 'FunctionDeclaration')
+          node.declaration.body?.body.forEach(s)
+        break
+      case 'IfStatement':
+        e(node.test, 0)
+        s(node.consequent)
+        s(node.alternate)
+        break
+      case 'WhileStatement':
+      case 'DoWhileStatement':
+        e(node.test, 0)
+        s(node.body)
+        break
+      case 'ForStatement':
+        if (node.init)
+          e(node.init.type === 'VariableDeclaration' ? node.init.declarations[0]?.init : node.init, 0)
+        if (node.test)
+          e(node.test, 0)
+        if (node.update)
+          e(node.update, 0)
+        s(node.body)
+        break
+      case 'BlockStatement':
+        node.body.forEach(s)
+        break
+      case 'ReturnStatement':
+        if (node.argument)
+          e(node.argument, 0)
+        break
+      case 'ThrowStatement':
+        e(node.argument, 0)
+        break
+      case 'SwitchStatement':
+        e(node.discriminant, 0)
+        node.cases.forEach((c: any) => c.consequent.forEach(s))
+        break
+      case 'LabeledStatement':
+        s(node.body)
+        break
+      case 'TryStatement':
+        s(node.block)
+        if (node.handler)
+          s(node.handler.body)
+        if (node.finalizer)
+          s(node.finalizer)
+        break
+    }
+  }
+
+  ast.program.body.forEach(s)
+  return max
+}
+
 describe('maxExprDepth', () => {
+  it('output expression depth does not exceed maxExprDepth', () => {
+    const cases: Array<[Uint8Array, number]> = [
+      [new TextEncoder().encode('hello world'), 1],
+      [new TextEncoder().encode('the quick brown fox'), 3],
+      [new Uint8Array([0xDE, 0xAD, 0xBE, 0xEF, 0x12, 0x34]), 5],
+      [new Uint8Array(Array.from({ length: 20 }, (_, i) => i * 13)), 7],
+      [new TextEncoder().encode('https://example.com/api/v2'), 10],
+      [new Uint8Array(Array.from({ length: 30 }, (_, i) => (i * 37) & 0xFF)), 20],
+    ]
+    for (const [data, maxDepth] of cases) {
+      const js = encode(data, { maxExprDepth: maxDepth })
+      expect(measureMaxExprDepth(js)).toBeLessThanOrEqual(maxDepth)
+      expect(Array.from(decode(js, { maxExprDepth: maxDepth }))).toEqual(Array.from(data))
+    }
+  })
+
   it('round-trips with depth 10', () => {
     for (let i = 0; i < 50; i++) {
       const len = Math.floor(Math.random() * 20) + 1
@@ -377,7 +542,7 @@ describe('maxExprDepth', () => {
   it('different depths produce different output for same input', () => {
     const msg = new TextEncoder().encode('hello')
     const outputs = new Set<string>()
-    for (const d of [5, 10, 15, 20, 50]) {
+    for (const d of [1, 5, 10, 20, 50]) {
       outputs.add(encode(msg, { maxExprDepth: d }))
     }
     expect(outputs.size).toBeGreaterThanOrEqual(2)
@@ -443,5 +608,6 @@ describe('maxExprDepth', () => {
     const js = encode(data, { maxExprDepth: 64 })
     const out = decode(js, { maxExprDepth: 64 })
     expect(Array.from(out)).toEqual(Array.from(data))
+    expect(measureMaxExprDepth(js)).toBeLessThanOrEqual(64)
   })
 })

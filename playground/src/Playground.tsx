@@ -222,7 +222,7 @@ export function Playground() {
                   dirRef.current = 'encode'
                 }
               }}
-              placeholder="∞"
+              placeholder="1"
             />
           </div>
           <button className="sp-share" onClick={share}>

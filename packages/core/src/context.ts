@@ -35,8 +35,13 @@ export interface ScopeEntry {
   type: ScopeType
 }
 
-/** Max expression nesting depth before forcing leaf-only candidates. */
-export const MAX_EXPR_DEPTH = Infinity // default — override via createCodec for browser use
+/**
+ * Max expression nesting depth before forcing leaf-only candidates.
+ * Default 1 — leaf-only expressions produce many short statements, making
+ * output resemble a real JS module with imports, declarations, and exports.
+ * Override via createCodec for deeper expression trees.
+ */
+export const MAX_EXPR_DEPTH = 1
 
 export type ScopeBucket = 'top-level' | 'function-body' | 'loop-body' | 'block-body'
 
@@ -66,6 +71,8 @@ export interface EncodingContext {
   blockDepth: number
   scopeBucket: ScopeBucket
   prevStmtKey: string
+  hasExportDefault: boolean
+  hasLeftImportRegion: boolean
 }
 
 export function initialContext(): EncodingContext {
@@ -81,6 +88,8 @@ export function initialContext(): EncodingContext {
     blockDepth: 0,
     scopeBucket: 'top-level',
     prevStmtKey: '<START>',
+    hasExportDefault: false,
+    hasLeftImportRegion: false,
   }
 }
 
@@ -154,14 +163,45 @@ export function mixHash(hash: number, byte: number): number {
   return hash >>> 0
 }
 
-/** Derive a deterministic name from hash + index. */
+/** Derive a deterministic minifier-style name from hash + index (e.g. a, b, aa, bc). */
 export function nameFromHash(hash: number, index: number): string {
   const ALPHA = 'abcdefghijklmnopqrstuvwxyz'
   const h = mixHash(hash, index)
-  const a = ALPHA[h % 26]
-  const b = ALPHA[(h >>> 8) % 26]
-  const c = ALPHA[(h >>> 16) % 26]
-  return `_${a}${b}${c}`
+  // 702 possible names: a–z (26) + aa–zz (676), excluding 2-letter JS reserved words
+  const total = 26 + 26 * 26
+  let slot = h % total
+  // Skip 2-letter JS reserved words: 'do' (slot 118), 'if' (239), 'in' (247)
+  if (slot >= 26) {
+    const s = slot - 26
+    const two = ALPHA[Math.floor(s / 26)] + ALPHA[s % 26]
+    if (two === 'do' || two === 'if' || two === 'in') {
+      slot = (slot + 1) % total
+    }
+  }
+  if (slot < 26) {
+    return ALPHA[slot]
+  }
+  const s = slot - 26
+  return ALPHA[Math.floor(s / 26)] + ALPHA[s % 26]
+}
+
+/**
+ * Derive a per-statement expression depth cap from the post-selection hash.
+ * Only meaningful when globalMax > 1 (non-default maxExprDepth).
+ * Distribution: 50% → 1, 25% → 2, 12.5% → 3, 12.5% → globalMax.
+ * Encoder and decoder call this with the same post-mixHash value so they agree.
+ */
+export function stmtDepthFromHash(hash: number, globalMax: number): number {
+  if (globalMax <= 1)
+    return globalMax
+  const r = (hash >>> 8) & 0xFF
+  if (r < 128)
+    return 1
+  if (r < 192)
+    return Math.min(2, globalMax)
+  if (r < 224)
+    return Math.min(3, globalMax)
+  return globalMax
 }
 
 /** Derive a label name from hash. */
@@ -234,7 +274,10 @@ function buildAllCandidates(): Candidate[] {
   // Leaves
   c.push({ key: 'NumericLiteral:0', nodeType: 'NumericLiteral', variant: 0, children: [], weight: lookupWeight('NumericLiteral:0'), isStatement: false })
   c.push({ key: 'StringLiteral:0', nodeType: 'StringLiteral', variant: 0, children: [], weight: lookupWeight('StringLiteral:0'), isStatement: false })
-  c.push({ key: 'Identifier:0', nodeType: 'Identifier', variant: 0, children: [], weight: lookupWeight('Identifier:0'), isStatement: false })
+  // Identifier:corpus — picks a name from the corpus identifier list (not a scope variable).
+  // variant = -1 signals corpus mode. Only present in the pool when scope is empty; when
+  // scope is non-empty, filterCandidates replaces it with dynamic Identifier:scope:i variants.
+  c.push({ key: 'Identifier:corpus', nodeType: 'Identifier', variant: -1, children: [], weight: lookupWeight('Identifier:0'), isStatement: false })
   c.push({ key: 'BooleanLiteral:1', nodeType: 'BooleanLiteral', variant: 1, children: [], weight: lookupWeight('BooleanLiteral:1'), isStatement: false })
   c.push({ key: 'BooleanLiteral:0', nodeType: 'BooleanLiteral', variant: 0, children: [], weight: lookupWeight('BooleanLiteral:0'), isStatement: false })
   c.push({ key: 'NullLiteral:0', nodeType: 'NullLiteral', variant: 0, children: [], weight: lookupWeight('NullLiteral:0'), isStatement: false })
@@ -272,18 +315,18 @@ function buildAllCandidates(): Candidate[] {
   // Conditional (weight 0.8, 3 children)
   c.push({ key: 'ConditionalExpression:0', nodeType: 'ConditionalExpression', variant: 0, children: ['expr', 'expr', 'expr'], weight: lookupWeight('ConditionalExpression:0'), isStatement: false })
 
-  // Call/New expression — arg count as variant (type-gated: only when scope has callable/constructable)
-  for (let n = 0; n < 19; n++) {
+  // Call/New expression — arg count 0-4 (covers most real-world calls)
+  for (let n = 0; n <= 4; n++) {
     const ch: SlotKind[] = ['expr', ...Array.from<SlotKind>({ length: n }).fill('expr')]
     c.push({ key: `CallExpression:${n}`, nodeType: 'CallExpression', variant: n, children: ch, weight: lookupWeight(`CallExpression:${n}`), isStatement: false })
   }
-  for (let n = 0; n < 16; n++) {
+  for (let n = 0; n <= 3; n++) {
     const ch: SlotKind[] = ['expr', ...Array.from<SlotKind>({ length: n }).fill('expr')]
     c.push({ key: `NewExpression:${n}`, nodeType: 'NewExpression', variant: n, children: ch, weight: lookupWeight(`NewExpression:${n}`), isStatement: false })
   }
 
-  // OptionalCallExpression — type-gated: expr?.(args) throws if expr is non-null non-callable
-  for (let n = 0; n < 19; n++) {
+  // OptionalCallExpression — arg count 0-3
+  for (let n = 0; n <= 3; n++) {
     const ch: SlotKind[] = ['expr', ...Array.from<SlotKind>({ length: n }).fill('expr')]
     c.push({ key: `OptionalCallExpression:${n}`, nodeType: 'OptionalCallExpression', variant: n, children: ch, weight: lookupWeight(`OptionalCallExpression:${n}`), isStatement: false })
   }
@@ -295,11 +338,11 @@ function buildAllCandidates(): Candidate[] {
   c.push({ key: 'OptionalMemberExpression:0', nodeType: 'OptionalMemberExpression', variant: 0, children: ['expr'], weight: lookupWeight('OptionalMemberExpression:0'), isStatement: false })
   c.push({ key: 'OptionalMemberExpression:1', nodeType: 'OptionalMemberExpression', variant: 1, children: ['expr', 'expr'], weight: lookupWeight('OptionalMemberExpression:1'), isStatement: false })
 
-  // Array/Object — element/prop count (extended to 0-31 for more unique candidates)
-  for (let n = 0; n < 32; n++) {
+  // Array/Object — element/prop count 0-4 (covers most real-world literals)
+  for (let n = 0; n <= 4; n++) {
     c.push({ key: `ArrayExpression:${n}`, nodeType: 'ArrayExpression', variant: n, children: Array.from<SlotKind>({ length: n }).fill('expr'), weight: lookupWeight(`ArrayExpression:${n}`), isStatement: false })
   }
-  for (let n = 0; n < 32; n++) {
+  for (let n = 0; n <= 4; n++) {
     const ch: SlotKind[] = []
     for (let j = 0; j < n; j++) {
       ch.push('expr', 'expr')
@@ -307,25 +350,25 @@ function buildAllCandidates(): Candidate[] {
     c.push({ key: `ObjectExpression:${n}`, nodeType: 'ObjectExpression', variant: n, children: ch, weight: lookupWeight(`ObjectExpression:${n}`), isStatement: false })
   }
 
-  // Sequence expression (count 2-29, extended range)
-  for (let n = 2; n <= 29; n++) {
+  // Sequence expression — count 2-4 (rare in real code, small variants only)
+  for (let n = 2; n <= 4; n++) {
     c.push({ key: `SequenceExpression:${n - 2}`, nodeType: 'SequenceExpression', variant: n - 2, children: Array.from<SlotKind>({ length: n }).fill('expr'), weight: lookupWeight(`SequenceExpression:${n - 2}`), isStatement: false })
   }
 
-  // Template literals (extended to 0-16)
-  for (let n = 0; n < 17; n++) {
+  // Template literals — 0-3 interpolations
+  for (let n = 0; n <= 3; n++) {
     c.push({ key: `TemplateLiteral:${n}`, nodeType: 'TemplateLiteral', variant: n, children: Array.from<SlotKind>({ length: n }).fill('expr'), weight: lookupWeight(`TemplateLiteral:${n}`), isStatement: false })
   }
-  // TaggedTemplateExpression (type-gated: tag must be callable)
-  for (let n = 0; n < 8; n++) {
+  // TaggedTemplateExpression — 0-2 interpolations
+  for (let n = 0; n <= 2; n++) {
     c.push({ key: `TaggedTemplateExpression:${n}`, nodeType: 'TaggedTemplateExpression', variant: n, children: ['expr', ...Array.from<SlotKind>({ length: n }).fill('expr')], weight: lookupWeight(`TaggedTemplateExpression:${n}`), isStatement: false })
   }
 
-  // Arrow/Function expression — param count (extended to 0-23)
-  for (let n = 0; n < 24; n++) {
+  // Arrow/Function expression — param count 0-3 (covers most functions)
+  for (let n = 0; n <= 3; n++) {
     c.push({ key: `ArrowFunctionExpression:${n}`, nodeType: 'ArrowFunctionExpression', variant: n, children: ['expr'], weight: lookupWeight(`ArrowFunctionExpression:${n}`), isStatement: false })
   }
-  for (let n = 0; n < 24; n++) {
+  for (let n = 0; n <= 3; n++) {
     c.push({ key: `FunctionExpression:${n}`, nodeType: 'FunctionExpression', variant: n, children: ['expr'], weight: lookupWeight(`FunctionExpression:${n}`), isStatement: false })
   }
 
@@ -338,10 +381,11 @@ function buildAllCandidates(): Candidate[] {
 
   // ── Statement candidates (only available in statement context) ──
 
-  // ExpressionStatement is NOT a candidate — expression candidates in statement context
-  // are wrapped in ExpressionStatement automatically by the encoder's default case.
-  // Having ExpressionStatement:0 as a separate candidate creates ambiguity in the decoder
-  // (can't distinguish "expression selected directly" from "ExpressionStatement selected + inner expr").
+  // ExpressionStatement: when selected, the encoder calls buildExpr for a separate
+  // expression-level table lookup. Expressions are excluded from the statement table
+  // so there's no ambiguity — ExpressionStatement:0 is the only way to get an expression
+  // in statement context.
+  c.push({ key: 'ExpressionStatement:0', nodeType: 'ExpressionStatement', variant: 0, children: ['expr'], weight: lookupWeight('ExpressionStatement:0'), isStatement: true })
 
   // VariableDeclaration: var/let/const (weight 2)
   c.push({ key: 'VariableDeclaration:0', nodeType: 'VariableDeclaration', variant: 0, children: ['expr'], weight: lookupWeight('VariableDeclaration:0'), isStatement: true }) // var
@@ -355,18 +399,13 @@ function buildAllCandidates(): Candidate[] {
   // WhileStatement (weight 1)
   c.push({ key: 'WhileStatement:0', nodeType: 'WhileStatement', variant: 0, children: ['expr', 'block'], weight: lookupWeight('WhileStatement:0'), isStatement: true })
 
-  // ForStatement × 8 null combos (weight 0.8)
-  for (let v = 0; v < 8; v++) {
-    const ch: SlotKind[] = []
-    if (v & 1)
-      ch.push('expr')
-    if (v & 2)
-      ch.push('expr')
-    if (v & 4)
-      ch.push('expr')
-    ch.push('block')
-    c.push({ key: `ForStatement:${v}`, nodeType: 'ForStatement', variant: v, children: ch, weight: lookupWeight(`ForStatement:${v}`), isStatement: true })
-  }
+  // ForStatement — only the 3 most common variants to limit bit cost
+  // variant 7: for(init;test;update) — the standard form
+  c.push({ key: 'ForStatement:7', nodeType: 'ForStatement', variant: 7, children: ['expr', 'expr', 'expr', 'block'], weight: lookupWeight('ForStatement:7'), isStatement: true })
+  // variant 3: for(init;test;) — no update
+  c.push({ key: 'ForStatement:3', nodeType: 'ForStatement', variant: 3, children: ['expr', 'expr', 'block'], weight: lookupWeight('ForStatement:3'), isStatement: true })
+  // variant 6: for(;test;update) — no init
+  c.push({ key: 'ForStatement:6', nodeType: 'ForStatement', variant: 6, children: ['expr', 'expr', 'block'], weight: lookupWeight('ForStatement:6'), isStatement: true })
 
   // DoWhileStatement (weight 0.8)
   c.push({ key: 'DoWhileStatement:0', nodeType: 'DoWhileStatement', variant: 0, children: ['expr', 'block'], weight: lookupWeight('DoWhileStatement:0'), isStatement: true })
@@ -377,8 +416,9 @@ function buildAllCandidates(): Candidate[] {
   // TryStatement (weight 0.5)
   c.push({ key: 'TryStatement:0', nodeType: 'TryStatement', variant: 0, children: ['block', 'block'], weight: lookupWeight('TryStatement:0'), isStatement: true })
 
-  // SwitchStatement × case counts 0-15 (weight varies)
-  for (let n = 0; n <= 15; n++) {
+  // SwitchStatement × case counts 0-2 (capped — higher counts consume too many bits
+  // and dominate the output when selected from a bijective table)
+  for (let n = 0; n <= 2; n++) {
     const ch: SlotKind[] = ['expr']
     for (let j = 0; j < n; j++) {
       ch.push('expr', 'block')
@@ -455,29 +495,30 @@ export function filterCandidates(ctx: EncodingContext): Candidate[] {
   const hasMemberSafe = scopeHasType(ctx.typedScope, MEMBER_SAFE_TYPES)
   const hasAnyScope = ctx.typedScope.length > 0
 
-  return ALL_CANDIDATES.filter((c) => {
+  const basePool = ALL_CANDIDATES.filter((c) => {
     // Block depth limit: filter out block-containing statements when deep
     if (ctx.maxExprDepth < Infinity && ctx.blockDepth >= Math.floor(ctx.maxExprDepth / 3)) {
       if (c.isStatement && c.children.includes('block'))
         return false
     }
 
-    // Expression depth limit: filter out non-leaf EXPRESSIONS when deep.
-    // Statement candidates are NOT affected (they always start a fresh expr tree at depth 0).
-    // Expression candidates with children are filtered → only leaves remain.
-    // We have ~12 leaf expressions + ~200 total → always >= 12 unique after filter.
-    // But we need 256! So also keep all STATEMENT candidates (non-expression-only context).
-    // In expression-only context, we need >= 256 leaves — we DON'T have that.
-    // So for expression-only at max depth: keep the non-leaf candidates but with tiny weight.
-    // The weight scaling already handles this (10000x leaf bias).
+    // Expression depth hard cap: at max depth, only leaf expressions are allowed.
+    // Eliminates the need for cosmetic (padLeaf) children in the encoder and ensures
+    // the generated AST never exceeds maxExprDepth. The decoder already stops recursing
+    // at depth >= maxExprDepth — this filter makes the encoder consistent with it.
+    if (ctx.expressionOnly && ctx.maxExprDepth < Infinity && ctx.exprDepth >= ctx.maxExprDepth && c.children.length > 0)
+      return false
 
     // Expression-only context: only expressions
     if (ctx.expressionOnly && c.isStatement)
       return false
 
-    // Statement context: BOTH statements and expressions are available.
-    // Expressions are implicitly wrapped in ExpressionStatement by the encoder.
-    // The decoder identifies them from the ExpressionStatement's inner expression.
+    // Statement context: only statements (including ExpressionStatement:0).
+    // Raw expression candidates are excluded — they're selected via a separate
+    // expression table when ExpressionStatement:0 is chosen. This gives statements
+    // proper probability (~1/30) instead of being drowned by ~200 expression candidates.
+    if (!ctx.expressionOnly && !c.isStatement)
+      return false
 
     // Top-level-only candidates: imports and exports are legal only at program root
     if (
@@ -488,6 +529,18 @@ export function filterCandidates(ctx: EncodingContext): Candidate[] {
     ) {
       return false
     }
+
+    // Only one export default per module
+    if (c.nodeType === 'ExportDefaultDeclaration' && ctx.hasExportDefault)
+      return false
+
+    // Imports only appear before any non-import statement
+    if (c.nodeType === 'ImportDeclaration' && ctx.hasLeftImportRegion)
+      return false
+
+    // Identifier:corpus is replaced by per-scope Identifier:scope:i variants when scope is non-empty
+    if (c.key === 'Identifier:corpus' && ctx.typedScope.length > 0)
+      return false
 
     // Context-gated entries
     if (c.nodeType === 'ReturnStatement' && !ctx.inFunction)
@@ -532,12 +585,7 @@ export function filterCandidates(ctx: EncodingContext): Candidate[] {
 
     return true
   }).map((c) => {
-    let w = lookupWeight(c.key, ctx.scopeBucket)
-
-    // Dynamic weight: Identifier gets heavier with more scope entries
-    if (c.nodeType === 'Identifier' && ctx.typedScope.length > 0) {
-      w += ctx.typedScope.length * 0.5
-    }
+    let w = lookupWeight(c.key === 'Identifier:corpus' ? 'Identifier:0' : c.key, ctx.scopeBucket)
 
     // Bigram transition weight: adjust weight based on previous statement
     if (ctx.prevStmtKey && !ctx.expressionOnly) {
@@ -571,6 +619,35 @@ export function filterCandidates(ctx: EncodingContext): Candidate[] {
 
     return w !== c.weight ? { ...c, weight: w } : c
   })
+
+  // Dynamic per-scope Identifier variants: one per typedScope entry.
+  // Each encodes a reference to a specific declared variable. These replace
+  // Identifier:corpus when scope is non-empty, producing scope-referencing code.
+  // Weight per variant = corpus Identifier weight / N so combined weight ≈ corpus baseline.
+  if (ctx.expressionOnly && ctx.typedScope.length > 0) {
+    const corpusIdentWeight = lookupWeight('Identifier:0', ctx.scopeBucket)
+    const perVarWeight = corpusIdentWeight / ctx.typedScope.length
+
+    // Apply depth scaling to per-scope variants (same as other leaf expressions)
+    let depthScale = 1
+    if (ctx.exprDepth > 0 && ctx.maxExprDepth < Infinity) {
+      const depthRatio = ctx.exprDepth / ctx.maxExprDepth
+      depthScale = 10 ** (depthRatio * 4) // leaves scale UP near max depth
+    }
+
+    for (let i = 0; i < ctx.typedScope.length; i++) {
+      basePool.push({
+        key: `Identifier:scope:${i}`,
+        nodeType: 'Identifier',
+        variant: i,
+        children: [],
+        weight: perVarWeight * depthScale,
+        isStatement: false,
+      })
+    }
+  }
+
+  return basePool
 }
 
 /**

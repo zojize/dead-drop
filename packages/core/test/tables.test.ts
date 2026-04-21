@@ -12,10 +12,10 @@ describe('dynamic table generation', () => {
     const ctx = initialContext()
     const candidates = filterCandidates(ctx)
     const table = buildTable(candidates, 0)
-    // Table size is 2^bitWidth(uniqueCount)
     const bits = bitWidth(table.length)
     expect(table.length).toBe(1 << bits)
-    expect(table.length).toBeGreaterThanOrEqual(128)
+    // Statement-only table: ~30-50 candidates → 16 or 32 entries
+    expect(table.length).toBeGreaterThanOrEqual(16)
   })
 
   it('reverse table maps candidate keys back to indices', () => {
@@ -41,7 +41,7 @@ describe('dynamic table generation', () => {
       if (t1[i].key !== t2[i].key)
         diffs++
     }
-    expect(diffs).toBeGreaterThan(50)
+    expect(diffs).toBeGreaterThan(5)
   })
 
   it('expression-only context excludes statements', () => {
@@ -51,11 +51,19 @@ describe('dynamic table generation', () => {
     expect(hasStatement).toBe(false)
   })
 
+  it('statement context excludes raw expressions', () => {
+    const ctx = initialContext()
+    const candidates = filterCandidates(ctx)
+    const hasRawExpr = candidates.some(c => !c.isStatement)
+    expect(hasRawExpr).toBe(false)
+    // But ExpressionStatement:0 IS available as a statement candidate
+    expect(candidates.some(c => c.key === 'ExpressionStatement:0')).toBe(true)
+  })
+
   it('context-gated entries only appear in correct context', () => {
     const base = filterCandidates(initialContext())
     expect(base.some(c => c.nodeType === 'ReturnStatement')).toBe(false)
     expect(base.some(c => c.nodeType === 'BreakStatement')).toBe(false)
-    expect(base.some(c => c.nodeType === 'AwaitExpression')).toBe(false)
 
     const inFn = filterCandidates({ ...initialContext(), inFunction: true })
     expect(inFn.some(c => c.nodeType === 'ReturnStatement')).toBe(true)
@@ -64,7 +72,8 @@ describe('dynamic table generation', () => {
     expect(inLoop.some(c => c.nodeType === 'BreakStatement')).toBe(true)
     expect(inLoop.some(c => c.nodeType === 'ContinueStatement')).toBe(true)
 
-    const inAsync = filterCandidates({ ...initialContext(), inAsync: true })
+    // AwaitExpression is expression-only, not available in statement context
+    const inAsync = filterCandidates({ ...initialContext(), inAsync: true, expressionOnly: true })
     expect(inAsync.some(c => c.nodeType === 'AwaitExpression')).toBe(true)
   })
 })
